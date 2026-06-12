@@ -1,235 +1,188 @@
 const Chart = {
-    timeframe: '1m',
-    ticks: [],
-    candles: [],
-    maxTicks: 200,
-    maxCandles: 60,
+    chart: null,
+    areaSeries: null,
+    barrierUpperSeries: null,
+    barrierLowerSeries: null,
+    initialized: false,
+    libraryReady: false,
+
+    tickData: [],
+    maxTicks: 5000,
+
+    barrierUpper: null,
+    barrierLower: null,
+    barrierActive: false,
 
     init() {
-        document.querySelectorAll('.chart-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                this.timeframe = btn.dataset.tf;
-                document.querySelectorAll('.chart-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                this.draw();
-            });
+        this.loadLibrary().then(() => {
+            this.libraryReady = true;
+            this.createChart();
+            this.initialized = true;
+        }).catch(err => {
+            console.error('[Chart] Library failed:', err);
         });
-        window.addEventListener('resize', () => {
-            if (document.getElementById('chart').classList.contains('active')) this.draw();
+    },
+
+    loadLibrary() {
+        return new Promise((resolve, reject) => {
+            if (window.LightweightCharts) return resolve();
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js';
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
         });
+    },
+
+    createChart() {
+        const container = document.getElementById('lwChart');
+        if (!container) return;
+
+        const styles = getComputedStyle(document.body);
+        const bg = styles.getPropertyValue('--bg').trim() || '#0a0a0a';
+        const text = styles.getPropertyValue('--text').trim() || '#e0e0e0';
+        const grid = styles.getPropertyValue('--text-muted').trim() || '#333';
+
+        this.chart = LightweightCharts.createChart(container, {
+            autoSize: true,
+            layout: {
+                background: { type: 'solid', color: bg },
+                textColor: text,
+            },
+            grid: {
+                vertLines: { color: grid + '30', style: LightweightCharts.LineStyle.SparseDotted },
+                horzLines: { color: grid + '30', style: LightweightCharts.LineStyle.SparseDotted },
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal,
+                vertLine: { color: '#5f636d', width: 1, style: LightweightCharts.LineStyle.Dashed },
+                horzLine: { color: '#5f636d', width: 1, style: LightweightCharts.LineStyle.Dashed },
+            },
+            rightPriceScale: {
+                borderColor: grid,
+                scaleMargins: { top: 0.15, bottom: 0.15 },
+            },
+            timeScale: {
+                borderColor: grid,
+                timeVisible: true,
+                secondsVisible: true,
+                rightOffset: 50,
+                barSpacing: 6,
+            },
+            handleScroll: { vertTouchDrag: false },
+            handleScale: { axisPressedMouseMove: true },
+        });
+
+        this.areaSeries = this.chart.addAreaSeries({
+            lineColor: '#ffffff',
+            topColor: '#00b06b33',
+            bottomColor: '#00b06b05',
+            lineWidth: 2,
+            lastValueVisible: true,
+            priceLineVisible: true,
+            priceLineColor: '#ffffff',
+            priceLineWidth: 1,
+            priceLineStyle: LightweightCharts.LineStyle.Dashed,
+        });
+
+        this.barrierUpperSeries = this.chart.addLineSeries({
+            color: '#2979ff',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+        });
+
+        this.barrierLowerSeries = this.chart.addLineSeries({
+            color: '#2979ff',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+        });
+    },
+
+    onTickHistory(ticks) {
+        if (!ticks || ticks.length === 0) return;
+        const newData = ticks.map(t => ({ time: t.epoch, value: t.price }));
+        this.tickData = newData;
+        if (this.areaSeries) {
+            this.areaSeries.setData(this.tickData.slice(-2000));
+            this.chart.timeScale().fitContent();
+        }
     },
 
     onTick(tick) {
-        if (!tick || !tick.quote) return;
-        this.ticks.push({ epoch: tick.epoch, price: tick.quote });
-        if (this.ticks.length > this.maxTicks) this.ticks.shift();
-        this.buildCandles();
-        if (document.getElementById('chart').classList.contains('active')) this.draw();
-    },
+        if (!tick || tick.quote === undefined) return;
+        const point = { time: tick.epoch, value: tick.quote };
+        this.tickData.push(point);
+        if (this.tickData.length > this.maxTicks) this.tickData.shift();
 
-    onCandles(candleData) {
-        if (candleData && candleData.candles && Array.isArray(candleData.candles)) {
-            const parsed = candleData.candles.map(c => ({
-                epoch: c.epoch,
-                open: c.open,
-                high: c.high,
-                low: c.low,
-                close: c.close
-            }));
-            this.candles = parsed.slice(-this.maxCandles);
+        this.updateBarrierColors(tick.quote);
+
+        if (this.areaSeries) {
+            this.areaSeries.update(point);
+            this.updateBarrierLines();
         }
     },
 
-    buildCandles() {
-        if (this.timeframe === 'ticks') return;
-        const granularity = this.timeframe === '1m' ? 60 : 300;
-        const grouped = {};
-        this.ticks.forEach(t => {
-            const bucket = Math.floor(t.epoch / granularity) * granularity;
-            if (!grouped[bucket]) grouped[bucket] = [];
-            grouped[bucket].push(t.price);
-        });
-        const newCandles = [];
-        Object.keys(grouped).sort((a, b) => parseInt(a) - parseInt(b)).forEach(key => {
-            const prices = grouped[key];
-            newCandles.push({
-                epoch: parseInt(key),
-                open: prices[0],
-                high: Math.max(...prices),
-                low: Math.min(...prices),
-                close: prices[prices.length - 1]
+    setBarriers(upper, lower) {
+        this.barrierUpper = upper;
+        this.barrierLower = lower;
+        this.barrierActive = (upper !== null && lower !== null);
+        if (this.barrierUpperSeries && this.barrierLowerSeries) {
+            this.barrierUpperSeries.applyOptions({ visible: this.barrierActive });
+            this.barrierLowerSeries.applyOptions({ visible: this.barrierActive });
+        }
+    },
+
+    updateBarrierColors(currentPrice) {
+        if (!this.barrierActive || currentPrice === undefined || !this.areaSeries) return;
+        const inside = currentPrice <= this.barrierUpper && currentPrice >= this.barrierLower;
+
+        if (inside) {
+            this.areaSeries.applyOptions({
+                topColor: '#00b06b33',
+                bottomColor: '#00b06b05',
+                lineColor: '#ffffff'
             });
-        });
-        this.candles = newCandles.slice(-this.maxCandles);
+        } else {
+            this.areaSeries.applyOptions({
+                topColor: '#ff444f33',
+                bottomColor: '#ff444f05',
+                lineColor: '#ff444f'
+            });
+        }
     },
 
-    draw() {
-        const canvas = document.getElementById('chartCanvas');
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width;
-        canvas.height = rect.height;
+    updateBarrierLines() {
+        if (!this.barrierActive || !this.areaSeries || this.tickData.length < 2) return;
 
-        const styles = getComputedStyle(document.body);
-        const cardBg = styles.getPropertyValue('--card-bg').trim();
-        const textMuted = styles.getPropertyValue('--text-muted').trim();
+        const visibleData = this.tickData.slice(-200);
+        if (visibleData.length < 2) return;
 
-        ctx.fillStyle = cardBg;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const firstTime = visibleData[0].time;
+        const lastTime = visibleData[visibleData.length - 1].time;
+        const futureTime = lastTime + 50;
 
-        if (this.timeframe === 'ticks') this.drawTicks(ctx, styles);
-        else this.drawCandles(ctx, styles);
+        const upperData = [
+            { time: firstTime, value: this.barrierUpper },
+            { time: futureTime, value: this.barrierUpper }
+        ];
+        const lowerData = [
+            { time: firstTime, value: this.barrierLower },
+            { time: futureTime, value: this.barrierLower }
+        ];
 
-        // Timeframe label
-        ctx.fillStyle = textMuted;
-        ctx.font = '11px ' + styles.getPropertyValue('--font-mono').trim();
-        const label = this.timeframe === 'ticks' ? 'R_10 (Ticks)' : 'R_10 (' + this.timeframe + ')';
-        ctx.fillText(label, canvas.width - 110, 20);
+        this.barrierUpperSeries.setData(upperData);
+        this.barrierLowerSeries.setData(lowerData);
     },
 
-    drawTicks(ctx, styles) {
-        const accent = styles.getPropertyValue('--accent').trim();
-        const success = styles.getPropertyValue('--success').trim();
-        const danger = styles.getPropertyValue('--danger').trim();
-        const textMuted = styles.getPropertyValue('--text-muted').trim();
-
-        if (this.ticks.length < 2) {
-            ctx.fillStyle = textMuted;
-            ctx.font = '14px ' + styles.getPropertyValue('--font-mono').trim();
-            ctx.fillText('Waiting for live tick data...', canvas.width / 2 - 100, canvas.height / 2);
-            return;
-        }
-
-        // Grid
-        ctx.strokeStyle = textMuted;
-        ctx.globalAlpha = 0.08;
-        for (let i = 1; i < 5; i++) {
-            const y = (canvas.height / 5) * i;
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(canvas.width, y);
-            ctx.stroke();
-        }
-        ctx.globalAlpha = 1;
-
-        const prices = this.ticks.map(t => t.price);
-        const min = Math.min(...prices);
-        const max = Math.max(...prices);
-        const range = max - min || 1;
-        const pad = 50;
-
-        // Draw connecting line
-        ctx.beginPath();
-        ctx.strokeStyle = accent;
-        ctx.lineWidth = 2;
-        ctx.lineJoin = 'round';
-        this.ticks.forEach((t, i) => {
-            const x = pad + (i / (this.ticks.length - 1)) * (canvas.width - pad * 2);
-            const y = pad + (max - t.price) / range * (canvas.height - pad * 2);
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-
-        // Draw dots + glow
-        this.ticks.forEach((t, i) => {
-            const x = pad + (i / (this.ticks.length - 1)) * (canvas.width - pad * 2);
-            const y = pad + (max - t.price) / range * (canvas.height - pad * 2);
-            const prev = i > 0 ? this.ticks[i - 1].price : t.price;
-            const color = t.price >= prev ? success : danger;
-
-            // Glow
-            ctx.shadowColor = color;
-            ctx.shadowBlur = 8;
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-
-            // Inner white dot
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-            ctx.fill();
-        });
-
-        // Price labels
-        ctx.fillStyle = textMuted;
-        ctx.font = '11px ' + styles.getPropertyValue('--font-mono').trim();
-        ctx.fillText(max.toFixed(3), 8, pad);
-        ctx.fillText(min.toFixed(3), 8, canvas.height - pad);
-    },
-
-    drawCandles(ctx, styles) {
-        const success = styles.getPropertyValue('--success').trim();
-        const danger = styles.getPropertyValue('--danger').trim();
-        const textMuted = styles.getPropertyValue('--text-muted').trim();
-
-        if (this.candles.length < 2) {
-            ctx.fillStyle = textMuted;
-            ctx.font = '14px ' + styles.getPropertyValue('--font-mono').trim();
-            ctx.fillText('Building candles from tick stream...', canvas.width / 2 - 130, canvas.height / 2);
-            return;
-        }
-
-        // Grid
-        ctx.strokeStyle = textMuted;
-        ctx.globalAlpha = 0.08;
-        for (let i = 1; i < 5; i++) {
-            const y = (canvas.height / 5) * i;
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(canvas.width, y);
-            ctx.stroke();
-        }
-        ctx.globalAlpha = 1;
-
-        const min = Math.min(...this.candles.map(c => c.low));
-        const max = Math.max(...this.candles.map(c => c.high));
-        const range = max - min || 1;
-        const pad = 50;
-        const gap = 2;
-        const candleWidth = Math.max(3, (canvas.width - pad * 2) / this.candles.length - gap);
-
-        this.candles.forEach((c, i) => {
-            const x = pad + i * (candleWidth + gap) + candleWidth / 2;
-            const yOpen = pad + (max - c.open) / range * (canvas.height - pad * 2);
-            const yClose = pad + (max - c.close) / range * (canvas.height - pad * 2);
-            const yHigh = pad + (max - c.high) / range * (canvas.height - pad * 2);
-            const yLow = pad + (max - c.low) / range * (canvas.height - pad * 2);
-
-            const isGreen = c.close >= c.open;
-            const color = isGreen ? success : danger;
-
-            // Wick
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(x, yHigh);
-            ctx.lineTo(x, yLow);
-            ctx.stroke();
-
-            // Body
-            const bodyTop = Math.min(yOpen, yClose);
-            const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
-            ctx.fillStyle = color;
-            ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
-
-            // Glow on latest candle
-            if (i === this.candles.length - 1) {
-                ctx.shadowColor = color;
-                ctx.shadowBlur = 10;
-                ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
-                ctx.shadowBlur = 0;
-            }
-        });
-
-        // Price labels
-        ctx.fillStyle = textMuted;
-        ctx.font = '11px ' + styles.getPropertyValue('--font-mono').trim();
-        ctx.fillText(max.toFixed(3), 8, pad);
-        ctx.fillText(min.toFixed(3), 8, canvas.height - pad);
+    resizeAndDraw() {
+        if (!this.chart) return;
+        this.chart.resize();
+        this.chart.timeScale().fitContent();
     }
 };

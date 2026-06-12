@@ -19,7 +19,10 @@ async def startup():
 async def shutdown():
     if engine._demo_task:
         engine._demo_task.cancel()
-    await engine.deriv.close()
+    try:
+        await engine.deriv.close()
+    except:
+        pass
 
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -49,27 +52,47 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         await websocket.send_json({
             "type": "init",
-            "state": engine.state.dict(),
+            "state": {
+                "balance": engine.state.balance,
+                "session_pl": engine.session_profit,
+                "total_trades": getattr(engine.state.current_session, 'total_trades', 0) if engine.state.current_session else 0,
+                "total_wins": getattr(engine.state.current_session, 'wins', 0) if engine.state.current_session else 0,
+                "total_losses": getattr(engine.state.current_session, 'losses', 0) if engine.state.current_session else 0,
+                "open_contracts": list(engine.open_contracts.values()),
+                "is_running": engine.state.is_running,
+                "is_trading_enabled": engine.is_trading_enabled,
+                "current_session": {
+                    "id": getattr(engine.state.current_session, 'id', None),
+                    "profit": getattr(engine.state.current_session, 'profit', 0),
+                    "initial_balance": getattr(engine.state.current_session, 'initial_balance', 0),
+                } if engine.state.current_session else None
+            },
             "version": VERSION,
-            "demo_mode": engine._demo_mode
+            "demo_mode": engine._demo_mode,
+            "ticks": engine.ticks[-500:],
+            "candles_1m": engine.candles_1m,
+            "candles_5m": engine.candles_5m
+        })
+
+        await websocket.send_json({
+            "type": "balance",
+            "balance": engine.state.balance,
+            "session_pl": engine.session_profit
         })
 
         while True:
             data = await websocket.receive_text()
             msg = json.loads(data)
-
             action = msg.get("action")
             if action == "toggle_trading":
                 await engine.set_trading_enabled(msg.get("enabled", False))
             elif action == "set_strategy":
-                await engine.set_strategy(msg.get("strategy", "ACCU"))
+                await engine.set_strategy(msg.get("strategy", "DUMMY_RISE_FALL"))
             elif action == "get_stats":
                 stats = await engine.get_stats()
                 await websocket.send_json({"type": "stats", "stats": stats})
             elif action == "get_logs":
-                rows = await engine.db.fetchall(
-                    "SELECT * FROM logs ORDER BY timestamp DESC LIMIT 100"
-                )
+                rows = await engine.db.fetchall("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 100")
                 logs = [{"id": r[0], "timestamp": r[1], "level": r[2], "message": r[3], "source": r[4]} for r in rows]
                 await websocket.send_json({"type": "logs", "logs": logs})
             elif action == "clear_cache":

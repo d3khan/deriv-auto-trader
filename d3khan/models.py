@@ -26,6 +26,7 @@ class Session(BaseModel):
     total_trades: int = 0
     wins: int = 0
     losses: int = 0
+    win_rate: float = 0.0  # <-- ADDED
     profit: float = 0.0
     status: str = "active"
 

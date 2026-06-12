@@ -5,7 +5,7 @@ const App = {
         balance: 0, sessionPL: 0, totalTrades: 0, activeTrades: 0, wins: 0, losses: 0, consecutiveLosses: 0,
         stake: 0.35, maxLoss: 1.00, maxConsec: 3, tpTarget: 0.25,
         soundEnabled: false, notifEnabled: true, autoRestart: true, logs: [], notifCount: 0,
-        chartTimeframe: '1m', demoMode: false, currentStrategy: 'ACCU'
+        demoMode: false, currentStrategy: 'DUMMY_RISE_FALL'
     },
     reconnectTimer: null,
     favicons: {
@@ -17,8 +17,10 @@ const App = {
     init() {
         this.initTheme();
         this.initTabs();
+        this.initChartTabs();
         this.initWebSocket();
         this.initNotifBell();
+        this.initVisibilityListener();
         Dashboard.init();
         Stats.init();
         Chart.init();
@@ -49,7 +51,28 @@ const App = {
                 document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
                 btn.classList.add('active');
                 document.getElementById(tabId).classList.add('active');
-                if (tabId === 'chart') setTimeout(() => Chart.draw(), 50);
+                if (tabId === 'chart') {
+                    const activeChart = document.querySelector('.chart-btn.active')?.dataset.chart;
+                    if (activeChart === 'ticks') {
+                        setTimeout(() => Chart.resizeAndDraw(), 150);
+                    }
+                }
+            });
+        });
+    },
+
+    initChartTabs() {
+        document.querySelectorAll('.chart-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const sub = btn.dataset.chart;
+                if (!sub) return;
+                document.querySelectorAll('.chart-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('chart-ticks').style.display = sub === 'ticks' ? 'block' : 'none';
+                document.getElementById('chart-candles').style.display = sub === 'candles' ? 'block' : 'none';
+                if (sub === 'ticks') {
+                    setTimeout(() => Chart.resizeAndDraw(), 150);
+                }
             });
         });
     },
@@ -83,6 +106,17 @@ const App = {
         };
     },
 
+    initVisibilityListener() {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                const activeChart = document.querySelector('.chart-btn.active')?.dataset.chart;
+                if (activeChart === 'ticks') {
+                    setTimeout(() => Chart.resizeAndDraw(), 150);
+                }
+            }
+        });
+    },
+
     send(obj) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
     },
@@ -91,11 +125,12 @@ const App = {
         switch (msg.type) {
             case 'init':
                 this.state.demoMode = msg.demo_mode || false;
-                document.getElementById('demo-badge-sidebar').classList.toggle('hidden', !this.state.demoMode);
+                const badge = document.getElementById('demo-badge-sidebar');
+                if (badge) badge.classList.toggle('hidden', !this.state.demoMode);
                 if (msg.state) {
                     const s = msg.state;
-                    this.state.balance = s.balance || 0;
-                    this.state.sessionPL = s.current_session?.profit || 0;
+                    this.state.balance = (s.balance !== undefined && s.balance !== null) ? s.balance : 0;
+                    this.state.sessionPL = (s.session_pl !== undefined && s.session_pl !== null) ? s.session_pl : 0;
                     this.state.totalTrades = s.total_trades || 0;
                     this.state.wins = s.total_wins || 0;
                     this.state.losses = s.total_losses || 0;
@@ -103,28 +138,35 @@ const App = {
                     this.state.engineRunning = s.is_running || false;
                     this.state.tradingEnabled = s.is_trading_enabled || false;
                 }
+                if (msg.ticks && msg.ticks.length > 0) {
+                    Chart.onTickHistory(msg.ticks);
+                }
                 Dashboard.render();
                 Stats.render();
                 break;
+
             case 'balance':
-                this.state.balance = msg.balance;
-                this.state.sessionPL = msg.session_pl;
+                this.state.balance = (msg.balance !== undefined && msg.balance !== null) ? msg.balance : 0;
+                this.state.sessionPL = (msg.session_pl !== undefined && msg.session_pl !== null) ? msg.session_pl : 0;
                 Dashboard.updateBalance(msg.balance);
                 Dashboard.updatePL(msg.session_pl);
                 Stats.updateBalance(msg.balance);
                 break;
+
             case 'tick':
+                if (msg.barriers) {
+                    Chart.setBarriers(msg.barriers.upper, msg.barriers.lower);
+                }
                 Chart.onTick(msg.tick);
                 break;
-            case 'candles':
-                Chart.onCandles(msg.candles);
-                break;
+
             case 'trade_opened':
                 this.state.activeTrades++;
                 Dashboard.updateActive(this.state.activeTrades);
                 Stats.addContract(msg.contract);
                 Utils.toast('Trade opened: ' + (msg.contract?.contract_type || ''), 'success');
                 break;
+
             case 'trade_closed':
                 this.state.activeTrades = Math.max(0, this.state.activeTrades - 1);
                 this.state.totalTrades++;
@@ -139,38 +181,45 @@ const App = {
                 Stats.updateMetrics(this.state);
                 Utils.toast('Trade closed: ' + (msg.profit > 0 ? '+' : '') + (msg.profit?.toFixed?.(2) || msg.profit), msg.profit > 0 ? 'success' : 'error');
                 break;
+
             case 'contract_update':
                 Stats.updateContract(msg.contract);
                 break;
+
             case 'log':
                 Logs.add(msg.level, msg.message, msg.source, msg.timestamp);
                 Dashboard.addLog(msg.level, msg.message);
                 break;
+
             case 'trading_status':
                 this.state.tradingEnabled = msg.enabled;
                 Dashboard.updateEngineStatus(this.state.engineRunning, msg.enabled);
                 break;
+
             case 'engine_status':
                 this.state.engineRunning = msg.status === 'running';
                 Dashboard.updateEngineStatus(this.state.engineRunning, this.state.tradingEnabled);
                 break;
+
             case 'auto_stop':
                 this.state.tradingEnabled = false;
                 Dashboard.updateEngineStatus(this.state.engineRunning, false);
                 Utils.toast('Auto-stop: ' + msg.reason, 'warning');
                 Utils.sendDesktopNotif('d3khan Auto-Stop', msg.reason);
                 break;
+
             case 'error':
                 Utils.toast(msg.message, 'error');
                 break;
+
             case 'info':
                 Utils.toast(msg.message, 'info');
                 break;
+
             case 'stats':
                 Stats.updateFromServer(msg.stats);
                 break;
-            case 'logs':
-                break;
+
             case 'pong':
                 break;
         }

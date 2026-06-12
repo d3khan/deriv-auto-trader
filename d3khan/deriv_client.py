@@ -1,148 +1,204 @@
 import asyncio
+from typing import Dict, Callable, Optional, Any
 from deriv_api import DerivAPI
-from deriv_api.errors import APIError
 
 class DerivClient:
-    def __init__(self, token: str, app_id: int, url: str = None):
+    def __init__(self, token: str, app_id: int, ws_url: str):
         self.token = token
         self.app_id = app_id
-        self.url = url
-        self.api = None
+        self.ws_url = ws_url
+        self.api: Optional[DerivAPI] = None
         self.authorized = False
         self.balance = 0.0
-        self.callbacks = {}
-        self.running = False
-        self._sources = {}
-        self._subs = {}
-        self._heartbeat_task = None
+        self.currency = "USD"
+        
+        self.callbacks: Dict[str, Callable] = {
+            "tick": lambda x: None,
+            "candles": lambda x: None,
+            "ohlc": lambda x: None,
+            "balance": lambda x: None,
+            "buy": lambda x: None,
+            "contract_update": lambda x: None,
+        }
+        self._disposables = []
+
+    async def _test_tcp(self):
+        """Test if we can reach Deriv's server at all."""
+        try:
+            import ssl
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection('ws.derivws.com', 443, ssl=ssl.create_default_context()),
+                timeout=5
+            )
+            writer.close()
+            await writer.wait_closed()
+            print("[Deriv] TCP connection to ws.derivws.com:443 OK")
+            return True
+        except Exception as e:
+            print(f"[Deriv] TCP connection FAILED: {e}")
+            return False
 
     async def connect(self):
+        print(f"[Deriv] Starting connection. Token prefix: {self.token[:6]}...")
+        
+        tcp_ok = await self._test_tcp()
+        if not tcp_ok:
+            print("[Deriv] Network appears to block Deriv. Will use demo mode.")
+            return False
+
         try:
+            print("[Deriv] Creating DerivAPI with default endpoint...")
             self.api = DerivAPI(app_id=self.app_id)
-            self.running = True
-            self._heartbeat_task = asyncio.create_task(self._heartbeat())
-            auth_response = await self.authorize()
-            if "error" in auth_response:
-                print(f"[Deriv] Auth failed: {auth_response['error']}")
-                self.authorized = False
-            else:
-                self.authorized = True
-                print(f"[Deriv] Connected and authorized. Balance: {self.balance}")
+            await asyncio.sleep(2)
         except Exception as e:
-            print(f"[Deriv] Connection failed: {e}")
-            self.authorized = False
-            asyncio.create_task(self._retry_connect())
-
-    async def _retry_connect(self, delay: float = 5.0):
-        await asyncio.sleep(delay)
-        if not self.authorized and self.running:
-            print("[Deriv] Retrying connection...")
-            await self.connect()
-
-    async def authorize(self):
-        try:
-            response = await self.api.authorize(self.token)
-            if "authorize" in response:
-                self.authorized = True
-                self.balance = response["authorize"]["balance"]
-                if "balance" in self.callbacks:
-                    await self.callbacks["balance"](self.balance)
-            return response
-        except APIError as e:
-            return {"error": str(e)}
-
-    async def _heartbeat(self):
-        while self.running:
+            print(f"[Deriv] Default endpoint failed: {e}")
             try:
-                await asyncio.sleep(30)
-                if self.api:
-                    await self.api.send({"ping": 1})
-            except Exception as e:
-                print(f"[Deriv] Heartbeat error: {e}")
+                print(f"[Deriv] Trying explicit endpoint: {self.ws_url}")
+                self.api = DerivAPI(endpoint=self.ws_url, app_id=self.app_id)
+                await asyncio.sleep(2)
+            except Exception as e2:
+                print(f"[Deriv] Explicit endpoint failed: {e2}")
+                return False
+        
+        print("[Deriv] Sending authorize...")
+        try:
+            auth = await asyncio.wait_for(self.api.authorize(self.token), timeout=60)
+        except asyncio.TimeoutError:
+            print("[Deriv] Authorize timed out after 60s")
+            return False
+        except Exception as e:
+            print(f"[Deriv] Authorize error: {e}")
+            return False
+        
+        if auth and not auth.get("error"):
+            self.authorized = True
+            auth_data = auth.get("authorize", {})
+            self.balance = float(auth_data.get("balance", 0))
+            self.currency = auth_data.get("currency", "USD")
+            print(f"[Deriv] SUCCESS! Balance: {self.balance} {self.currency}")
+            await self._safe_callback("balance", self.balance)
+            await self._subscribe_balance()
+            return True
+        else:
+            error = auth.get("error", {}) if auth else "Unknown auth error"
+            print(f"[Deriv] Auth rejected: {error}")
+            return False
+
+    async def _safe_callback(self, key: str, data: Any):
+        try:
+            await self.callbacks[key](data)
+        except Exception as e:
+            print(f"[Deriv] Callback error ({key}): {e}")
+
+    async def _subscribe_balance(self):
+        try:
+            print("[Deriv] Subscribing to balance updates...")
+            source = await self.api.subscribe({"balance": 1, "subscribe": 1})
+            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_balance_msg(msg)))
+            self._disposables.append(disp)
+            print("[Deriv] Balance subscription active")
+        except Exception as e:
+            print(f"[Deriv] Balance subscribe error: {e}")
+
+    async def _on_balance_msg(self, msg: dict):
+        bal_data = msg.get("balance", {})
+        if bal_data:
+            balance = float(bal_data.get("balance", 0))
+            self.balance = balance
+            print(f"[Deriv] Balance update: {balance}")
+            await self._safe_callback("balance", balance)
 
     async def subscribe_ticks(self, symbol: str):
-        if not self.authorized or not self.api:
-            return
         try:
-            src = await self.api.subscribe({"ticks": symbol})
-            self._sources[f"tick_{symbol}"] = src
-            self._subs[f"tick_{symbol}"] = src.subscribe(lambda msg: self._handle_tick(msg, symbol))
+            print(f"[Deriv] Subscribing to ticks: {symbol}")
+            source = await self.api.subscribe({"ticks": symbol, "subscribe": 1})
+            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_tick_msg(msg)))
+            self._disposables.append(disp)
+            print(f"[Deriv] Ticks active: {symbol}")
         except Exception as e:
             print(f"[Deriv] Tick subscribe error: {e}")
 
-    def _handle_tick(self, msg, symbol):
-        if "tick" in msg and "tick" in self.callbacks:
-            tick = msg["tick"]
-            asyncio.create_task(self.callbacks["tick"](tick))
+    async def _on_tick_msg(self, msg: dict):
+        tick = msg.get("tick", {})
+        if tick:
+            await self._safe_callback("tick", tick)
 
-    async def subscribe_candles(self, symbol: str, granularity: int = 60):
-        if not self.authorized or not self.api:
-            return
+    async def subscribe_candles(self, symbol: str, granularity: int):
         try:
-            response = await self.api.send({
+            print(f"[Deriv] Subscribing to candles: {symbol} {granularity}s")
+            req = {
                 "ticks_history": symbol,
-                "adjust_start_time": 1,
-                "count": 100,
                 "end": "latest",
-                "start": 1,
                 "style": "candles",
-                "granularity": granularity
-            })
-            if "candles" in response and "candles" in self.callbacks:
-                asyncio.create_task(self.callbacks["candles"](response))
+                "granularity": granularity,
+                "count": 1000,
+                "subscribe": 1
+            }
+            source = await self.api.subscribe(req)
+            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_candle_msg(msg)))
+            self._disposables.append(disp)
+            print(f"[Deriv] Candles active: {symbol} {granularity}s")
         except Exception as e:
-            print(f"[Deriv] Candles error: {e}")
+            print(f"[Deriv] Candle subscribe error: {e}")
 
-    async def get_proposal(self, proposal_data: dict) -> dict:
-        if not self.authorized or not self.api:
-            return {"error": "not authorized"}
-        try:
-            return await self.api.proposal(proposal_data)
-        except APIError as e:
-            return {"error": str(e)}
+    async def _on_candle_msg(self, msg: dict):
+        msg_type = msg.get("msg_type")
+        if msg_type == "candles":
+            await self._safe_callback("candles", msg)
+        elif msg_type == "ohlc":
+            await self._safe_callback("ohlc", msg)
 
-    async def buy_contract(self, proposal_id: str, price: float) -> dict:
-        if not self.authorized or not self.api:
-            return {"error": "not authorized"}
+    async def get_tick_history(self, symbol: str, count: int = 1000):
+        """One-shot request for historical ticks."""
         try:
-            return await self.api.buy({"buy": proposal_id, "price": price})
-        except APIError as e:
-            return {"error": str(e)}
-
-    async def sell_contract(self, contract_id: str) -> dict:
-        if not self.authorized or not self.api:
-            return {"error": "not authorized"}
-        try:
-            return await self.api.sell({"sell": contract_id})
-        except APIError as e:
+            req = {
+                "ticks_history": symbol,
+                "end": "latest",
+                "style": "ticks",
+                "count": count
+            }
+            return await asyncio.wait_for(self.api.send(req), timeout=30)
+        except Exception as e:
             return {"error": str(e)}
 
     async def subscribe_contract_updates(self, contract_id: str):
-        if not self.authorized or not self.api:
-            return
         try:
-            src = await self.api.subscribe({"proposal_open_contract": 1, "contract_id": contract_id, "subscribe": 1})
-            self._sources[f"contract_{contract_id}"] = src
-            self._subs[f"contract_{contract_id}"] = src.subscribe(lambda msg: self._handle_contract(msg))
+            req = {
+                "proposal_open_contract": 1,
+                "contract_id": contract_id,
+                "subscribe": 1
+            }
+            source = await self.api.subscribe(req)
+            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_contract_msg(msg)))
+            self._disposables.append(disp)
         except Exception as e:
             print(f"[Deriv] Contract subscribe error: {e}")
 
-    def _handle_contract(self, msg):
-        if "proposal_open_contract" in msg and "contract_update" in self.callbacks:
-            asyncio.create_task(self.callbacks["contract_update"](msg["proposal_open_contract"]))
+    async def _on_contract_msg(self, msg: dict):
+        poc = msg.get("proposal_open_contract", {})
+        if poc:
+            await self._safe_callback("contract_update", poc)
+
+    async def get_proposal(self, proposal_req: dict):
+        return await asyncio.wait_for(self.api.proposal(proposal_req), timeout=10)
+
+    async def buy_contract(self, proposal_id: str, price: float):
+        return await asyncio.wait_for(self.api.buy({"buy": proposal_id, "price": price}), timeout=10)
+
+    async def sell_contract(self, contract_id: str):
+        return await asyncio.wait_for(self.api.sell({"sell": contract_id}), timeout=10)
 
     async def close(self):
-        self.running = False
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
+        for disp in self._disposables:
             try:
-                await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
-        for sub in self._subs.values():
-            try:
-                sub.dispose()
+                if hasattr(disp, 'dispose'):
+                    disp.dispose()
             except:
                 pass
-        self._subs.clear()
-        self._sources.clear()
+        self._disposables.clear()
+        if self.api:
+            try:
+                if hasattr(self.api, 'disconnect'):
+                    await self.api.disconnect()
+            except:
+                pass

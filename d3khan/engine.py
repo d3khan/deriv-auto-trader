@@ -9,11 +9,14 @@ from deriv_client import DerivClient
 from strategies import StrategyEngine
 from models import *
 
+DERIV_SYMBOL = "1HZ10V"
+
+
 class TradingEngine:
     def __init__(self):
         self.db = Database()
-        self.deriv = DerivClient(TOKEN, DERIV_WS_URL)
-        self.strategy_engine = StrategyEngine("ACCU")
+        self.deriv = DerivClient(TOKEN, APP_ID, DERIV_WS_URL)
+        self.strategy_engine = StrategyEngine("DUMMY_RISE_FALL")
         self.state = EngineState()
         self.state.current_session = None
         self.frontend_clients: List = []
@@ -23,42 +26,25 @@ class TradingEngine:
         self.open_contracts: Dict[str, Any] = {}
         self._demo_mode = False
         self._demo_task = None
+        
+        self.ticks: List[dict] = []
+        self.candles_1m: List[dict] = []
+        self.candles_5m: List[dict] = []
+        self.max_ticks = 5000
+        self.max_candles = 2000
 
-    async def start(self):
-        await self.db.connect()
-
-        # Try to connect to Deriv, but don't crash if it fails
-        try:
-            await self.deriv.connect()
-            self.deriv.callbacks["balance"] = self._on_balance
-            self.deriv.callbacks["tick"] = self._on_tick
-            self.deriv.callbacks["candles"] = self._on_candles
-            self.deriv.callbacks["buy"] = self._on_buy
-            self.deriv.callbacks["contract_update"] = self._on_contract_update
-
-            if self.deriv.authorized:
-                await self.deriv.subscribe_ticks(SYMBOL)
-                await self.deriv.subscribe_candles(SYMBOL, 60)
-                await self.deriv.subscribe_candles(SYMBOL, 300)
-                await self._log("info", "Connected to Deriv API")
-            else:
-                self._demo_mode = True
-                await self._log("warning", "Deriv auth failed — running in DEMO mode with simulated ticks")
-                self._demo_task = asyncio.create_task(self._demo_tick_loop())
-        except Exception as e:
-            self._demo_mode = True
-            await self._log("warning", f"Deriv connection failed: {e} — running in DEMO mode")
-            self._demo_task = asyncio.create_task(self._demo_tick_loop())
-
-        await self._start_session()
-        self.state.is_running = True
-        await self._broadcast({"type": "engine_status", "status": "running", "demo_mode": self._demo_mode})
+    def _get_stake(self, contract_type: str) -> float:
+        """Return stake amount respecting Deriv contract minimums."""
+        ct = contract_type or ""
+        # Accumulators require $1.00 minimum stake on Deriv
+        if "ACCU" in ct:
+            return max(float(STAKE), 1.0)
+        return max(float(STAKE), 0.35)
 
     async def _demo_tick_loop(self):
-        """Simulate R_10 ticks for local testing without Deriv connection"""
         base_price = 5000.0
         while True:
-            await asyncio.sleep(1)  # 1 second ticks
+            await asyncio.sleep(1)
             noise = (random.random() - 0.5) * 2.0
             base_price += noise
             tick = {
@@ -67,6 +53,110 @@ class TradingEngine:
                 "symbol": SYMBOL
             }
             await self._on_tick(tick)
+
+    def _generate_demo_history(self):
+        now = int(datetime.now().timestamp())
+        base_price = 5000.0
+        for i in range(21600, 0, -1):
+            epoch = now - i
+            noise = (random.random() - 0.5) * 0.2
+            base_price += noise
+            tick = {
+                "epoch": epoch,
+                "quote": round(base_price, 3),
+                "symbol": SYMBOL
+            }
+            self.ticks.append({"epoch": tick["epoch"], "price": tick["quote"]})
+            self._update_candles_from_tick(tick)
+        if len(self.ticks) > self.max_ticks:
+            self.ticks = self.ticks[-self.max_ticks:]
+
+    async def start(self):
+        await self.db.connect()
+
+        self.deriv.callbacks["tick"] = self._on_tick
+        self.deriv.callbacks["candles"] = self._on_candles_history
+        self.deriv.callbacks["ohlc"] = self._on_ohlc
+        self.deriv.callbacks["balance"] = self._on_balance
+        self.deriv.callbacks["contract_update"] = self._on_contract_update
+
+        deriv_connected = False
+        try:
+            print("[Engine] Attempting Deriv connection...")
+            deriv_connected = await self.deriv.connect()
+            if deriv_connected:
+                self._demo_mode = False
+                self.state.balance = self.deriv.balance
+                print(f"[Engine] REAL MODE: Balance = ${self.state.balance:.2f}")
+                await self.deriv.subscribe_ticks(DERIV_SYMBOL)
+                await self.deriv.subscribe_candles(DERIV_SYMBOL, 60)
+                await self.deriv.subscribe_candles(DERIV_SYMBOL, 300)
+                await self._load_tick_history()
+                await self._log("info", f"Deriv connected. Real balance: ${self.state.balance:.2f}")
+            else:
+                raise Exception("Deriv auth returned False")
+        except Exception as e:
+            print(f"[Engine] Deriv connection failed: {e}")
+            await self._log("warning", f"Deriv connection failed: {e} — starting DEMO mode")
+            self._demo_mode = True
+            self.state.balance = CAPITAL
+            self._generate_demo_history()
+            self._demo_task = asyncio.create_task(self._demo_tick_loop())
+            print(f"[Engine] DEMO MODE: Balance = ${self.state.balance:.2f}")
+
+        await self._start_session()
+        self.state.is_running = True
+        
+        await self._broadcast({
+            "type": "engine_status", 
+            "status": "running", 
+            "demo_mode": self._demo_mode
+        })
+
+        await self._broadcast({
+            "type": "init",
+            "state": {
+                "balance": self.state.balance,
+                "session_pl": self.session_profit,
+                "total_trades": 0,
+                "total_wins": 0,
+                "total_losses": 0,
+                "open_contracts": [],
+                "is_running": True,
+                "is_trading_enabled": False,
+                "current_session": {
+                    "id": self.state.current_session.id if self.state.current_session else None,
+                    "profit": 0,
+                    "initial_balance": self.state.balance
+                }
+            },
+            "version": VERSION,
+            "demo_mode": self._demo_mode,
+            "ticks": self.ticks[-2000:],
+            "candles_1m": self.candles_1m,
+            "candles_5m": self.candles_5m
+        })
+
+        await self._broadcast({
+            "type": "balance",
+            "balance": self.state.balance,
+            "session_pl": self.session_profit
+        })
+
+    async def _load_tick_history(self):
+        """Load historical ticks for 1-tick chart."""
+        try:
+            resp = await self.deriv.get_tick_history(DERIV_SYMBOL, 1000)
+            if resp and not resp.get("error") and resp.get("history"):
+                times = resp["history"].get("times", [])
+                prices = resp["history"].get("prices", [])
+                self.ticks = [
+                    {"epoch": int(times[i]), "price": float(prices[i])}
+                    for i in range(len(times))
+                ]
+                print(f"[Engine] Loaded {len(self.ticks)} historical ticks")
+        except Exception as e:
+            print(f"[Engine] Tick history load failed: {e}")
 
     async def _start_session(self):
         session = Session(initial_balance=self.state.balance or CAPITAL)
@@ -82,6 +172,7 @@ class TradingEngine:
 
     async def _on_balance(self, balance: float):
         self.state.balance = balance
+        print(f"[Engine] Balance updated: ${balance:.2f}")
         await self._broadcast({
             "type": "balance",
             "balance": balance,
@@ -91,8 +182,32 @@ class TradingEngine:
     async def _on_tick(self, tick: dict):
         self.state.last_tick = tick
         self.strategy_engine.update(tick)
-        await self._broadcast({"type": "tick", "tick": tick})
-
+        
+        self.ticks.append({
+            "epoch": tick.get("epoch", 0),
+            "price": tick.get("quote", 0)
+        })
+        if len(self.ticks) > self.max_ticks:
+            self.ticks.pop(0)
+        
+        if self._demo_mode:
+            self._update_candles_from_tick(tick)
+        
+        # Calculate accumulator barriers for visualization (absolute ±0.438)
+        price = tick.get("quote", 0)
+        barrier_upper = round(price + 0.438, 3)
+        barrier_lower = round(price - 0.438, 3)
+        
+        await self._broadcast({
+            "type": "tick",
+            "tick": tick,
+            "barriers": {
+                "upper": barrier_upper,
+                "lower": barrier_lower,
+                "active": True
+            }
+        })
+        
         for contract_id, contract in list(self.open_contracts.items()):
             exit_reason = self.strategy_engine.check_exit(contract)
             if exit_reason:
@@ -106,12 +221,88 @@ class TradingEngine:
                 else:
                     await self._execute_signal(signal)
 
-    async def _on_candles(self, candles: dict):
-        await self._broadcast({"type": "candles", "candles": candles})
+    def _update_candles_from_tick(self, tick: dict):
+        epoch = tick.get("epoch", 0)
+        price = tick.get("quote", 0)
+        for granularity, target in [(60, self.candles_1m), (300, self.candles_5m)]:
+            bucket = (epoch // granularity) * granularity
+            if target and len(target) > 0 and target[-1].get("epoch") == bucket:
+                c = target[-1]
+                if price > c["high"]: c["high"] = price
+                if price < c["low"]: c["low"] = price
+                c["close"] = price
+            else:
+                target.append({
+                    "epoch": bucket,
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "close": price
+                })
+                if len(target) > self.max_candles:
+                    target.pop(0)
+
+    async def _on_candles_history(self, msg: dict):
+        candles = msg.get("candles", [])
+        granularity = msg.get("echo_req", {}).get("granularity", 60)
+        if not candles:
+            return
+        
+        parsed = [
+            {"epoch": c["epoch"], "open": float(c["open"]), "high": float(c["high"]),
+             "low": float(c["low"]), "close": float(c["close"])}
+            for c in candles
+        ]
+        
+        if granularity == 300:
+            self.candles_5m = parsed
+        else:
+            self.candles_1m = parsed
+        
+        print(f"[Engine] Loaded {len(parsed)} candles for {granularity}s")
+        await self._broadcast({
+            "type": "candles_history",
+            "candles": parsed,
+            "granularity": granularity
+        })
+
+    async def _on_ohlc(self, msg: dict):
+        ohlc = msg.get("ohlc", {})
+        if not ohlc:
+            return
+        
+        granularity = ohlc.get("granularity", 60)
+        open_time = ohlc.get("open_time")
+        if not open_time:
+            return
+        
+        candle = {
+            "epoch": open_time,
+            "open": float(ohlc.get("open", 0)),
+            "high": float(ohlc.get("high", 0)),
+            "low": float(ohlc.get("low", 0)),
+            "close": float(ohlc.get("close", 0)),
+        }
+        
+        target = self.candles_5m if granularity == 300 else self.candles_1m
+        
+        if target and len(target) > 0 and target[-1].get("epoch") == open_time:
+            target[-1] = candle
+        else:
+            target.append(candle)
+            if len(target) > self.max_candles:
+                target.pop(0)
+        
+        await self._broadcast({
+            "type": "ohlc",
+            "ohlc": ohlc,
+            "granularity": granularity
+        })
 
     async def _execute_demo_trade(self, signal: dict):
-        """Simulate a trade in demo mode without hitting Deriv"""
-        if self.state.balance <= 0:
+        amount = self._get_stake(signal.get("contract_type", ""))
+        if self.state.balance < amount:
+            await self._log("warning", "Insufficient balance for trade")
             return
         if self.session_profit <= -MAX_DAILY_LOSS:
             self.is_trading_enabled = False
@@ -126,38 +317,44 @@ class TradingEngine:
             await self._broadcast({"type": "info", "message": "Take profit target reached"})
             return
 
+        self.state.balance -= amount
+        await self._broadcast({
+            "type": "balance",
+            "balance": self.state.balance,
+            "session_pl": self.session_profit
+        })
+
         contract_id = f"DEMO_{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1000,9999)}"
         buy_data = {
             "contract_id": contract_id,
             "symbol": SYMBOL,
             "contract_type": signal["contract_type"],
-            "stake": STAKE,
+            "stake": amount,
             "entry_price": self.state.last_tick["quote"] if self.state.last_tick else 5000.0,
+            "entry_epoch": int(datetime.now().timestamp()),
             "status": "open"
         }
         self.open_contracts[contract_id] = buy_data
 
         await self.db.execute(
             "INSERT INTO trades (session_id, contract_id, symbol, contract_type, strategy, stake, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (self.state.current_session.id, contract_id, SYMBOL, signal["contract_type"], self.strategy_engine.strategy, STAKE, "open")
+            (self.state.current_session.id, contract_id, SYMBOL, signal["contract_type"], self.strategy_engine.strategy, amount, "open")
         )
         await self.db.commit()
         await self._broadcast({"type": "trade_opened", "contract": buy_data})
-        await self._log("info", f"DEMO trade opened: {signal['contract_type']} @ {STAKE} USD")
+        await self._log("info", f"DEMO trade opened: {signal['contract_type']} @ ${amount} | Balance: ${self.state.balance:.2f}")
 
-        # Simulate close after 5-15 seconds
         asyncio.create_task(self._demo_close_contract(contract_id))
 
     async def _demo_close_contract(self, contract_id: str):
         await asyncio.sleep(random.randint(5, 15))
         if contract_id not in self.open_contracts:
             return
-
-        # 50/50 win/loss for demo
+        contract = self.open_contracts[contract_id]
+        stake = contract.get("stake", STAKE)
         is_win = random.random() > 0.5
-        profit = round(STAKE * 0.95, 2) if is_win else round(-STAKE, 2)
+        profit = round(stake * 0.95, 2) if is_win else round(-stake, 2)
         status = "won" if is_win else "lost"
-
         await self._close_trade(contract_id, profit, status)
 
     async def _on_buy(self, buy_data: dict):
@@ -201,13 +398,14 @@ class TradingEngine:
             await self._broadcast({"type": "info", "message": "Take profit target reached"})
             return
 
+        amount = self._get_stake(signal.get("contract_type", ""))
         proposal_req = {
             "proposal": 1,
-            "amount": STAKE,
+            "amount": amount,
             "basis": "stake",
             "contract_type": signal["contract_type"],
             "currency": "USD",
-            "symbol": SYMBOL
+            "symbol": DERIV_SYMBOL
         }
         if "duration" in signal:
             proposal_req["duration"] = signal["duration"]
@@ -218,7 +416,7 @@ class TradingEngine:
             proposal_req["growth_rate"] = signal["growth_rate"]
         if "multiplier" in signal:
             proposal_req["multiplier"] = signal["multiplier"]
-            stop_usd = STAKE * signal["multiplier"] * MULTIPLIER_TRAILING_STOP / 100
+            stop_usd = amount * signal["multiplier"] * MULTIPLIER_TRAILING_STOP / 100
             proposal_req["stop_loss"] = round(stop_usd, 2)
             proposal_req["stop_type"] = "trailing"
 
@@ -244,7 +442,12 @@ class TradingEngine:
     async def _sell_contract(self, contract_id: str, reason: str):
         if self._demo_mode:
             if contract_id in self.open_contracts:
-                del self.open_contracts[contract_id]
+                is_win = random.random() > 0.5
+                contract = self.open_contracts[contract_id]
+                stake = contract.get("stake", STAKE)
+                profit = round(stake * 0.95, 2) if is_win else round(-stake, 2)
+                status = "won" if is_win else "lost"
+                await self._close_trade(contract_id, profit, status)
             await self._log("info", f"DEMO sell: {reason}")
             return
         try:
@@ -254,8 +457,12 @@ class TradingEngine:
             await self._log("error", f"Sell failed: {str(e)}")
 
     async def _close_trade(self, contract_id: str, profit: float, status: str):
-        if contract_id in self.open_contracts:
-            del self.open_contracts[contract_id]
+        if contract_id not in self.open_contracts:
+            return
+        
+        contract = self.open_contracts[contract_id]
+        stake = contract.get("stake", STAKE)
+        del self.open_contracts[contract_id]
 
         await self.db.execute(
             "UPDATE trades SET profit = ?, status = ?, closed_at = CURRENT_TIMESTAMP WHERE contract_id = ?",
@@ -270,12 +477,19 @@ class TradingEngine:
         if profit > 0:
             self.state.current_session.wins += 1
             self.consecutive_losses = 0
+            self.state.balance += stake + profit
         else:
             self.state.current_session.losses += 1
             self.consecutive_losses += 1
 
         total = self.state.current_session.total_trades
         self.state.current_session.win_rate = (self.state.current_session.wins / total * 100) if total > 0 else 0
+
+        await self._broadcast({
+            "type": "balance",
+            "balance": self.state.balance,
+            "session_pl": self.session_profit
+        })
 
         await self._broadcast({
             "type": "trade_closed",

@@ -63,7 +63,7 @@ class IndicatorState:
         fast_ema = calc_ema(self.prices, fast)
         slow_ema = calc_ema(self.prices, slow)
         macd_val = fast_ema - slow_ema
-        signal_val = macd_val * 0.8  # Simplified signal approximation
+        signal_val = macd_val * 0.8
         return {"macd": macd_val, "signal": signal_val, "histogram": macd_val - signal_val}
 
     def donchian(self, period: int = 20) -> dict:
@@ -74,16 +74,22 @@ class IndicatorState:
         lower = min(prices)
         return {"upper": upper, "lower": lower, "middle": (upper + lower) / 2}
 
+
 class StrategyEngine:
     def __init__(self, strategy: str = "ACCU"):
         self.strategy = strategy
         self.indicators = IndicatorState()
         self.last_signal = None
+        self.tick_count = 0
+        self.last_direction = "CALL"
 
     def update(self, tick: dict):
         self.indicators.update(tick)
+        self.tick_count += 1
 
     def get_signal(self) -> Optional[Dict[str, Any]]:
+        if self.strategy == "DUMMY_RISE_FALL":
+            return self._dummy_rise_fall()
         if self.strategy == "ACCU":
             return self._accumulator_signal()
         elif self.strategy in ["CALL", "PUT"]:
@@ -101,6 +107,36 @@ class StrategyEngine:
         elif self.strategy in ["DIGITMATCH", "DIGITDIFF"]:
             return self._match_differ_signal()
         return None
+
+    def check_exit(self, contract: dict) -> Optional[str]:
+        if self.strategy == "ACCU":
+            bb = self.indicators.bbands(20, 2)
+            macd = self.indicators.macd(12, 26, 9)
+            price = self.indicators.prices[-1]
+            if bb["middle"] and price > 0:
+                dist = abs(price - bb["middle"]) / bb["middle"]
+                if dist > 0.15:
+                    return "Price moved >15% from middle band"
+            if abs(macd["histogram"]) > 0.05:
+                return "MACD histogram spike beyond ±0.05"
+        elif self.strategy == "DUMMY_RISE_FALL":
+            entry_epoch = contract.get("entry_epoch", 0)
+            current_epoch = self.indicators.ticks[-1].get("epoch", 0) if self.indicators.ticks else 0
+            if current_epoch - entry_epoch > 10:
+                return "dummy_time_exit"
+        return None
+
+    def _dummy_rise_fall(self) -> Optional[Dict[str, Any]]:
+        if self.tick_count % 5 != 0:
+            return None
+        self.last_direction = "PUT" if self.last_direction == "CALL" else "CALL"
+        return {
+            "action": "buy",
+            "contract_type": self.last_direction,
+            "duration": 5,
+            "duration_unit": "t",
+            "reason": "Dummy test signal"
+        }
 
     def _accumulator_signal(self) -> Optional[Dict[str, Any]]:
         bb = self.indicators.bbands(20, 2)
@@ -126,7 +162,7 @@ class StrategyEngine:
         if ema8 > ema21 and 50 < rsi < 70:
             return {"action": "buy", "contract_type": "CALL", "duration": 5, "duration_unit": "t", "reason": "EMA8>EMA21, RSI>50"}
         elif ema8 < ema21 and 30 < rsi < 50:
-            return {"action": "buy", "contract_type": "PUT", "duration": 5, "duration_unit": "t", "reason": "EMA8<<EMA21, RSI<<50"}
+            return {"action": "buy", "contract_type": "PUT", "duration": 5, "duration_unit": "t", "reason": "EMA8<EMA21, RSI<50"}
         return None
 
     def _multiplier_signal(self) -> Optional[Dict[str, Any]]:
@@ -188,16 +224,3 @@ class StrategyEngine:
             return {"action": "buy", "contract_type": "DIGITMATCH", "duration": 1, "duration_unit": "t"}
         else:
             return {"action": "buy", "contract_type": "DIGITDIFF", "duration": 1, "duration_unit": "t"}
-
-    def check_exit(self, contract: dict) -> Optional[str]:
-        if self.strategy == "ACCU":
-            bb = self.indicators.bbands(20, 2)
-            macd = self.indicators.macd(12, 26, 9)
-            price = self.indicators.prices[-1]
-            if bb["middle"] and price > 0:
-                dist = abs(price - bb["middle"]) / bb["middle"]
-                if dist > 0.15:
-                    return "Price moved >15% from middle band"
-            if abs(macd["histogram"]) > 0.05:
-                return "MACD histogram spike beyond ±0.05"
-        return None

@@ -3,7 +3,7 @@ import os
 # Identity
 APP_NAME = "d3khan"
 VERSION = "v1.0.0-alpha"
-TOKEN = "Vqla5qYgKQ4xIi5"
+TOKEN = "Vqla5qYgKQ4xIi5" #Fall Back Token: "0VgnvWU66hbBWPS"
 APP_ID = 1089
 
 # Trading Config — LOCKED
