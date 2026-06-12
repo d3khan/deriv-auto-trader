@@ -1,0 +1,203 @@
+from typing import Optional, Dict, Any
+
+class IndicatorState:
+    def __init__(self):
+        self.prices = []
+        self.ticks = []
+
+    def update(self, tick: dict):
+        self.ticks.append(tick)
+        self.prices.append(tick["quote"])
+        if len(self.prices) > 1000:
+            self.prices = self.prices[-1000:]
+            self.ticks = self.ticks[-1000:]
+
+    def sma(self, period: int) -> float:
+        if len(self.prices) < period:
+            return self.prices[-1] if self.prices else 0
+        return sum(self.prices[-period:]) / period
+
+    def ema(self, period: int) -> float:
+        if len(self.prices) < period:
+            return self.prices[-1] if self.prices else 0
+        prices = self.prices[-period:]
+        multiplier = 2 / (period + 1)
+        ema = prices[0]
+        for price in prices[1:]:
+            ema = (price - ema) * multiplier + ema
+        return ema
+
+    def rsi(self, period: int = 14) -> float:
+        if len(self.prices) < period + 1:
+            return 50.0
+        deltas = [self.prices[i] - self.prices[i-1] for i in range(-period, 0)]
+        gains = sum(d for d in deltas if d > 0)
+        losses = sum(-d for d in deltas if d < 0)
+        if losses == 0:
+            return 100.0
+        return 100 - (100 / (1 + gains / losses))
+
+    def bbands(self, period: int = 20, std_dev: float = 2.0) -> dict:
+        if len(self.prices) < period:
+            return {"upper": 0, "middle": 0, "lower": 0}
+        prices = self.prices[-period:]
+        middle = sum(prices) / period
+        variance = sum((p - middle) ** 2 for p in prices) / period
+        std = variance ** 0.5
+        return {"upper": middle + std_dev * std, "middle": middle, "lower": middle - std_dev * std}
+
+    def macd(self, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
+        if len(self.prices) < slow + signal:
+            return {"macd": 0, "signal": 0, "histogram": 0}
+
+        def calc_ema(prices, period):
+            if len(prices) < period:
+                return prices[-1] if prices else 0
+            p = prices[-period:]
+            multiplier = 2 / (period + 1)
+            ema = p[0]
+            for price in p[1:]:
+                ema = (price - ema) * multiplier + ema
+            return ema
+
+        fast_ema = calc_ema(self.prices, fast)
+        slow_ema = calc_ema(self.prices, slow)
+        macd_val = fast_ema - slow_ema
+        signal_val = macd_val * 0.8  # Simplified signal approximation
+        return {"macd": macd_val, "signal": signal_val, "histogram": macd_val - signal_val}
+
+    def donchian(self, period: int = 20) -> dict:
+        if len(self.prices) < period:
+            return {"upper": 0, "lower": 0, "middle": 0}
+        prices = self.prices[-period:]
+        upper = max(prices)
+        lower = min(prices)
+        return {"upper": upper, "lower": lower, "middle": (upper + lower) / 2}
+
+class StrategyEngine:
+    def __init__(self, strategy: str = "ACCU"):
+        self.strategy = strategy
+        self.indicators = IndicatorState()
+        self.last_signal = None
+
+    def update(self, tick: dict):
+        self.indicators.update(tick)
+
+    def get_signal(self) -> Optional[Dict[str, Any]]:
+        if self.strategy == "ACCU":
+            return self._accumulator_signal()
+        elif self.strategy in ["CALL", "PUT"]:
+            return self._rise_fall_signal()
+        elif self.strategy in ["MULTUP", "MULTDOWN"]:
+            return self._multiplier_signal()
+        elif self.strategy in ["ONETOUCH", "NOTOUCH"]:
+            return self._touch_signal()
+        elif self.strategy in ["OVER", "UNDER"]:
+            return self._digit_over_under_signal()
+        elif self.strategy in ["HIGHER", "LOWER"]:
+            return self._higher_lower_signal()
+        elif self.strategy in ["DIGITEVEN", "DIGITODD"]:
+            return self._even_odd_signal()
+        elif self.strategy in ["DIGITMATCH", "DIGITDIFF"]:
+            return self._match_differ_signal()
+        return None
+
+    def _accumulator_signal(self) -> Optional[Dict[str, Any]]:
+        bb = self.indicators.bbands(20, 2)
+        if not bb["middle"]:
+            return None
+        price = self.indicators.prices[-1]
+        dist_from_middle = abs(price - bb["middle"]) / bb["middle"]
+        if dist_from_middle < 0.001:
+            return {
+                "action": "buy",
+                "contract_type": "ACCU",
+                "growth_rate": 0.01,
+                "reason": "Price near middle band"
+            }
+        return None
+
+    def _rise_fall_signal(self) -> Optional[Dict[str, Any]]:
+        if len(self.indicators.prices) < 21:
+            return None
+        ema8 = self.indicators.ema(8)
+        ema21 = self.indicators.ema(21)
+        rsi = self.indicators.rsi(14)
+        if ema8 > ema21 and 50 < rsi < 70:
+            return {"action": "buy", "contract_type": "CALL", "duration": 5, "duration_unit": "t", "reason": "EMA8>EMA21, RSI>50"}
+        elif ema8 < ema21 and 30 < rsi < 50:
+            return {"action": "buy", "contract_type": "PUT", "duration": 5, "duration_unit": "t", "reason": "EMA8<<EMA21, RSI<<50"}
+        return None
+
+    def _multiplier_signal(self) -> Optional[Dict[str, Any]]:
+        sig = self._rise_fall_signal()
+        if sig:
+            sig["contract_type"] = "MULTUP" if sig["contract_type"] == "CALL" else "MULTDOWN"
+            sig["multiplier"] = 100
+            sig["stop_loss"] = 0.75
+        return sig
+
+    def _touch_signal(self) -> Optional[Dict[str, Any]]:
+        bb = self.indicators.bbands(20, 2)
+        price = self.indicators.prices[-1]
+        if not bb["upper"]:
+            return None
+        if price < bb["lower"] * 1.001:
+            return {"action": "buy", "contract_type": "ONETOUCH", "barrier": bb["upper"], "duration": 5, "duration_unit": "m"}
+        elif price > bb["upper"] * 0.999:
+            return {"action": "buy", "contract_type": "NOTOUCH", "barrier": bb["upper"] * 1.02, "duration": 5, "duration_unit": "m"}
+        return None
+
+    def _digit_over_under_signal(self) -> Optional[Dict[str, Any]]:
+        if not self.indicators.ticks:
+            return None
+        rsi = self.indicators.rsi(14)
+        if rsi > 60:
+            return {"action": "buy", "contract_type": "OVER", "barrier": 5, "duration": 1, "duration_unit": "t"}
+        elif rsi < 40:
+            return {"action": "buy", "contract_type": "UNDER", "barrier": 5, "duration": 1, "duration_unit": "t"}
+        return None
+
+    def _higher_lower_signal(self) -> Optional[Dict[str, Any]]:
+        if len(self.indicators.prices) < 21:
+            return None
+        ema8 = self.indicators.ema(8)
+        ema21 = self.indicators.ema(21)
+        if ema8 > ema21:
+            return {"action": "buy", "contract_type": "CALL", "barrier": "+0.000", "duration": 5, "duration_unit": "t"}
+        else:
+            return {"action": "buy", "contract_type": "PUT", "barrier": "-0.000", "duration": 5, "duration_unit": "t"}
+
+    def _even_odd_signal(self) -> Optional[Dict[str, Any]]:
+        if not self.indicators.ticks or len(self.indicators.ticks) < 10:
+            return None
+        recent_digits = [int(str(t["quote"])[-1]) for t in self.indicators.ticks[-10:]]
+        even_count = sum(1 for d in recent_digits if d % 2 == 0)
+        if even_count > 6:
+            return {"action": "buy", "contract_type": "DIGITEVEN", "duration": 1, "duration_unit": "t"}
+        elif even_count < 4:
+            return {"action": "buy", "contract_type": "DIGITODD", "duration": 1, "duration_unit": "t"}
+        return None
+
+    def _match_differ_signal(self) -> Optional[Dict[str, Any]]:
+        if not self.indicators.ticks or len(self.indicators.ticks) < 2:
+            return None
+        last_digit = int(str(self.indicators.ticks[-1]["quote"])[-1])
+        prev_digit = int(str(self.indicators.ticks[-2]["quote"])[-1])
+        if last_digit == prev_digit:
+            return {"action": "buy", "contract_type": "DIGITMATCH", "duration": 1, "duration_unit": "t"}
+        else:
+            return {"action": "buy", "contract_type": "DIGITDIFF", "duration": 1, "duration_unit": "t"}
+
+    def check_exit(self, contract: dict) -> Optional[str]:
+        if self.strategy == "ACCU":
+            bb = self.indicators.bbands(20, 2)
+            macd = self.indicators.macd(12, 26, 9)
+            price = self.indicators.prices[-1]
+            if bb["middle"] and price > 0:
+                dist = abs(price - bb["middle"]) / bb["middle"]
+                if dist > 0.15:
+                    return "Price moved >15% from middle band"
+            if abs(macd["histogram"]) > 0.05:
+                return "MACD histogram spike beyond ±0.05"
+        return None

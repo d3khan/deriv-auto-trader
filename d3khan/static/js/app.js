@@ -1,0 +1,208 @@
+const App = {
+    ws: null,
+    state: {
+        engineRunning: false, tradingEnabled: false, wsConnected: false, daemonOnline: false,
+        balance: 0, sessionPL: 0, totalTrades: 0, activeTrades: 0, wins: 0, losses: 0, consecutiveLosses: 0,
+        stake: 0.35, maxLoss: 1.00, maxConsec: 3, tpTarget: 0.25,
+        soundEnabled: false, notifEnabled: true, autoRestart: true, logs: [], notifCount: 0,
+        chartTimeframe: '1m', demoMode: false, currentStrategy: 'ACCU'
+    },
+    reconnectTimer: null,
+    favicons: {
+        void: 'https://kimi-web-img.moonshot.cn/img/cdn-icons-png.flaticon.com/3fbf85e7470b21893f94568921916eabaa1a23be.png',
+        ice: 'https://kimi-web-img.moonshot.cn/img/cdn-icons-png.flaticon.com/9059286e1753ab6e77aacba560f4f476f7fae544.png',
+        matrix: 'https://kimi-web-img.moonshot.cn/img/static.vecteezy.com/2bc0a5367beb99e016c163192d1cdef95cc49c0c.jpg'
+    },
+
+    init() {
+        this.initTheme();
+        this.initTabs();
+        this.initWebSocket();
+        this.initNotifBell();
+        Dashboard.init();
+        Stats.init();
+        Chart.init();
+        Options.init();
+        Settings.init();
+        Logs.init();
+    },
+
+    initTheme() {
+        const saved = localStorage.getItem('d3khan-theme');
+        const theme = ['void','ice','matrix'].includes(saved) ? saved : 'void';
+        document.body.setAttribute('data-theme', theme);
+        this.setFavicon(theme);
+        const sel = document.getElementById('theme-selector');
+        if (sel) sel.value = theme;
+    },
+
+    setFavicon(theme) {
+        const link = document.getElementById('favicon');
+        if (link && this.favicons[theme]) link.href = this.favicons[theme];
+    },
+
+    initTabs() {
+        document.querySelectorAll('.tab').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.dataset.tab;
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(tabId).classList.add('active');
+                if (tabId === 'chart') setTimeout(() => Chart.draw(), 50);
+            });
+        });
+    },
+
+    initWebSocket() {
+        const url = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws';
+        this.ws = new WebSocket(url);
+
+        this.ws.onopen = () => {
+            this.state.wsConnected = true;
+            this.updateConnectionStatus(true);
+            Utils.toast('WebSocket connected', 'success');
+            this.send({ action: 'ping' });
+        };
+
+        this.ws.onclose = () => {
+            this.state.wsConnected = false;
+            this.updateConnectionStatus(false);
+            Utils.toast('WebSocket disconnected — retrying…', 'warning');
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = setTimeout(() => this.initWebSocket(), 3000);
+        };
+
+        this.ws.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                this.handleMessage(msg);
+            } catch (err) {
+                console.error('WS parse error', err);
+            }
+        };
+    },
+
+    send(obj) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
+    },
+
+    handleMessage(msg) {
+        switch (msg.type) {
+            case 'init':
+                this.state.demoMode = msg.demo_mode || false;
+                document.getElementById('demo-badge-sidebar').classList.toggle('hidden', !this.state.demoMode);
+                if (msg.state) {
+                    const s = msg.state;
+                    this.state.balance = s.balance || 0;
+                    this.state.sessionPL = s.current_session?.profit || 0;
+                    this.state.totalTrades = s.total_trades || 0;
+                    this.state.wins = s.total_wins || 0;
+                    this.state.losses = s.total_losses || 0;
+                    this.state.activeTrades = (s.open_contracts || []).length;
+                    this.state.engineRunning = s.is_running || false;
+                    this.state.tradingEnabled = s.is_trading_enabled || false;
+                }
+                Dashboard.render();
+                Stats.render();
+                break;
+            case 'balance':
+                this.state.balance = msg.balance;
+                this.state.sessionPL = msg.session_pl;
+                Dashboard.updateBalance(msg.balance);
+                Dashboard.updatePL(msg.session_pl);
+                Stats.updateBalance(msg.balance);
+                break;
+            case 'tick':
+                Chart.onTick(msg.tick);
+                break;
+            case 'candles':
+                Chart.onCandles(msg.candles);
+                break;
+            case 'trade_opened':
+                this.state.activeTrades++;
+                Dashboard.updateActive(this.state.activeTrades);
+                Stats.addContract(msg.contract);
+                Utils.toast('Trade opened: ' + (msg.contract?.contract_type || ''), 'success');
+                break;
+            case 'trade_closed':
+                this.state.activeTrades = Math.max(0, this.state.activeTrades - 1);
+                this.state.totalTrades++;
+                if (msg.profit > 0) this.state.wins++; else this.state.losses++;
+                if (msg.profit <= 0) this.state.consecutiveLosses++; else this.state.consecutiveLosses = 0;
+                this.state.sessionPL += msg.profit || 0;
+                Dashboard.updateActive(this.state.activeTrades);
+                Dashboard.updateTrades(this.state.totalTrades);
+                Dashboard.updateWinRate(this.state.wins, this.state.losses);
+                Dashboard.updatePL(this.state.sessionPL);
+                Stats.updateContractClosed(msg.contract_id, msg.profit, msg.status);
+                Stats.updateMetrics(this.state);
+                Utils.toast('Trade closed: ' + (msg.profit > 0 ? '+' : '') + (msg.profit?.toFixed?.(2) || msg.profit), msg.profit > 0 ? 'success' : 'error');
+                break;
+            case 'contract_update':
+                Stats.updateContract(msg.contract);
+                break;
+            case 'log':
+                Logs.add(msg.level, msg.message, msg.source, msg.timestamp);
+                Dashboard.addLog(msg.level, msg.message);
+                break;
+            case 'trading_status':
+                this.state.tradingEnabled = msg.enabled;
+                Dashboard.updateEngineStatus(this.state.engineRunning, msg.enabled);
+                break;
+            case 'engine_status':
+                this.state.engineRunning = msg.status === 'running';
+                Dashboard.updateEngineStatus(this.state.engineRunning, this.state.tradingEnabled);
+                break;
+            case 'auto_stop':
+                this.state.tradingEnabled = false;
+                Dashboard.updateEngineStatus(this.state.engineRunning, false);
+                Utils.toast('Auto-stop: ' + msg.reason, 'warning');
+                Utils.sendDesktopNotif('d3khan Auto-Stop', msg.reason);
+                break;
+            case 'error':
+                Utils.toast(msg.message, 'error');
+                break;
+            case 'info':
+                Utils.toast(msg.message, 'info');
+                break;
+            case 'stats':
+                Stats.updateFromServer(msg.stats);
+                break;
+            case 'logs':
+                break;
+            case 'pong':
+                break;
+        }
+    },
+
+    updateConnectionStatus(online) {
+        const dots = ['ws-dot', 'ws-dot-sidebar', 'dash-status-dot', 'daemon-dot'];
+        const texts = [
+            { id: 'ws-text', on: 'Online', off: 'Offline' },
+            { id: 'ws-text-sidebar', on: 'Online', off: 'Offline' },
+            { id: 'dash-status-text', on: 'Connected', off: 'Disconnected' },
+            { id: 'daemon-text', on: 'Daemon Online', off: 'Daemon Offline' }
+        ];
+        dots.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.toggle('offline', !online);
+        });
+        texts.forEach(t => {
+            const el = document.getElementById(t.id);
+            if (el) {
+                el.textContent = online ? t.on : t.off;
+                el.style.color = online ? 'var(--success)' : 'var(--danger)';
+            }
+        });
+    },
+
+    initNotifBell() {
+        const bell = document.getElementById('notifBell');
+        if (bell) bell.addEventListener('click', () => {
+            Utils.requestNotificationPermission();
+        });
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => App.init());

@@ -1,0 +1,74 @@
+[data-theme="void"] {
+    --font-body: 'Fira Code', monospace;
+    --font-mono: 'Fira Code', monospace;
+    --font-display: 'Fira Code', monospace;
+    --bg-primary: #050505;
+    --bg-secondary: #0a0a0f;
+    --bg-card: #0f0f1a;
+    --bg-hover: #1a1a2e;
+    --bg-active: #1a1025;
+    --text-primary: #e0e0e0;
+    --text-secondary: #a0a0b0;
+    --text-muted: #606070;
+    --accent: #b026ff;
+    --accent-dim: #7c3aed;
+    --border: #1f1f2e;
+    --success: #00ff88;
+    --danger: #ff0055;
+    --warning: #ffcc00;
+    --info: #00ccff;
+    --glow-text: 0 0 10px rgba(176, 38, 255, 0.6);
+    --glow-btn: 0 0 12px rgba(176, 38, 255, 0.3);
+    --glow-input: 0 0 8px rgba(176, 38, 255, 0.4);
+    --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="ice"] {
+    --font-body: 'JetBrains Mono', monospace;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-display: 'JetBrains Mono', monospace;
+    --bg-primary: #020617;
+    --bg-secondary: #0a0f1e;
+    --bg-card: #0f172a;
+    --bg-hover: #1e293b;
+    --bg-active: #111827;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --accent: #00d4ff;
+    --accent-dim: #0ea5e9;
+    --border: #1e293b;
+    --success: #00ffaa;
+    --danger: #ff3366;
+    --warning: #fbbf24;
+    --info: #38bdf8;
+    --glow-text: 0 0 10px rgba(0, 212, 255, 0.6);
+    --glow-btn: 0 0 12px rgba(0, 212, 255, 0.3);
+    --glow-input: 0 0 8px rgba(0, 212, 255, 0.4);
+    --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="matrix"] {
+    --font-body: 'VT323', monospace;
+    --font-mono: 'VT323', monospace;
+    --font-display: 'VT323', monospace;
+    --bg-primary: #000000;
+    --bg-secondary: #001100;
+    --bg-card: #001a00;
+    --bg-hover: #003300;
+    --bg-active: #002200;
+    --text-primary: #00ff41;
+    --text-secondary: #00cc33;
+    --text-muted: #008822;
+    --accent: #00ff41;
+    --accent-dim: #00cc33;
+    --border: #003300;
+    --success: #00ff00;
+    --danger: #ff3333;
+    --warning: #ffff00;
+    --info: #00ffff;
+    --glow-text: 0 0 10px rgba(0, 255, 65, 0.6);
+    --glow-btn: 0 0 12px rgba(0, 255, 65, 0.3);
+    --glow-input: 0 0 8px rgba(0, 255, 65, 0.4);
+    --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.8);
+}

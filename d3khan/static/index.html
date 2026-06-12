@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>d3khan</title>
+<link id="favicon" rel="icon" type="image/png" href="https://kimi-web-img.moonshot.cn/img/cdn-icons-png.flaticon.com/3fbf85e7470b21893f94568921916eabaa1a23be.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Fira+Code:wght@300;400;500;600;700&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/themes.css">
+<link rel="stylesheet" href="/static/css/base.css">
+<base target="_blank">
+</head>
+<body data-theme="void">
+
+<div class="toast-container" id="toastContainer"></div>
+
+<div class="notif-bell" id="notifBell" title="Click to enable notifications">
+&#128276;
+<span class="notif-badge hidden" id="notifBadge">0</span>
+</div>
+
+<div class="app">
+<aside class="sidebar">
+<div class="logo">d3khan</div>
+<nav class="tabs">
+<button class="tab active" data-tab="dashboard"><span class="tab-icon">&#9670;</span><span class="tab-label">Dashboard</span></button>
+<button class="tab" data-tab="stats"><span class="tab-icon">&#9679;</span><span class="tab-label">Stats</span></button>
+<button class="tab" data-tab="chart"><span class="tab-icon">&#9687;</span><span class="tab-label">Chart</span></button>
+<button class="tab" data-tab="options"><span class="tab-icon">&#9680;</span><span class="tab-label">Options</span></button>
+<button class="tab" data-tab="settings"><span class="tab-icon">&#9682;</span><span class="tab-label">Settings</span></button>
+<button class="tab" data-tab="logs"><span class="tab-icon">&#9707;</span><span class="tab-label">Logs</span></button>
+</nav>
+<div class="sidebar-footer" style="margin-top:auto;padding:16px 12px 0;border-top:1px solid var(--card-border);">
+<div class="status-pill" id="ws-pill-sidebar" style="width:100%;justify-content:center;">
+<span class="status-dot offline" id="ws-dot-sidebar"></span>
+<span style="color:var(--danger)" id="ws-text-sidebar">Offline</span>
+</div>
+<div class="demo-badge hidden" id="demo-badge-sidebar" style="margin-top:8px;text-align:center;font-size:10px;font-weight:700;padding:4px;border-radius:4px;background:var(--warning);color:#000;letter-spacing:1px;">DEMO MODE</div>
+</div>
+</aside>
+
+<main class="content">
+
+<div class="panel active" id="dashboard">
+<div class="panel-header">System Runtime Matrix</div>
+<div class="card-grid-5">
+<div class="card"><div class="card-label">Live Balance</div><div class="card-value" id="dash-balance">$0.00</div><div class="card-sub">USD Account</div></div>
+<div class="card"><div class="card-label">Session P/L</div><div class="card-value" id="dash-pl">$0.00</div><div class="card-sub">Since boot</div></div>
+<div class="card"><div class="card-label">Total Trades</div><div class="card-value" id="dash-trades">0</div><div class="card-sub">This session</div></div>
+<div class="card"><div class="card-label">Active Trades</div><div class="card-value" id="dash-active">0</div><div class="card-sub">Currently open</div></div>
+<div class="card"><div class="ring-container"><svg class="ring-svg" viewBox="0 0 100 100"><circle class="ring-track" cx="50" cy="50" r="40"/><circle class="ring-fill" id="winRateRing" cx="50" cy="50" r="40" stroke-dasharray="251.2" stroke-dashoffset="251.2"/></svg><div class="ring-text" id="winRateText">0%</div></div><div class="card-label" style="text-align:center;margin-top:4px;">Win Rate</div></div>
+</div>
+<div class="row-2" style="flex:1;min-height:0;">
+<div class="panel-card">
+<div class="panel-card-header"><span>Daemon Stream Log</span><span class="status-pill" id="dash-status-pill"><span class="status-dot offline" id="dash-status-dot"></span><span style="color:var(--danger)" id="dash-status-text">Disconnected</span></span></div>
+<div class="panel-card-body" id="dash-log"></div>
+</div>
+<div class="panel-card">
+<div class="panel-card-header"><span>Core Execution Switch</span><span class="status-pill" id="engine-pill"><span class="status-dot offline" id="engine-dot"></span><span style="color:var(--danger)" id="engine-text">Engine Stopped</span></span></div>
+<div class="panel-card-body">
+<div class="form-group"><div class="form-label">Trading Engine Pipeline Status</div><div class="flex-between mt-2" style="gap:12px;"><button class="btn btn-primary" style="flex:1;" id="btn-start">Start Trading Engine</button><button class="btn btn-danger" style="flex:1;" id="btn-stop">Stop Trading Engine</button></div></div>
+<div class="form-group" style="margin-top:24px;"><div class="form-label">Quick Stake Override</div><input type="number" class="form-input" id="stake-input" value="0.35" step="0.01" min="0.01" max="1.00"><div class="card-sub" style="margin-top:6px;">Max allowed: $1.00 (7% of $5.00 balance rule)</div></div>
+<div class="flex-between mt-2" style="margin-top:20px;"><span class="text-muted" style="font-size:12px;">Daemon Status</span><span class="status-pill" style="border-color:var(--danger);" id="daemon-pill"><span class="status-dot offline" id="daemon-dot"></span><span style="color:var(--danger)" id="daemon-text">Daemon Offline</span></span></div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="panel" id="stats">
+<div class="panel-header">Account Statistics — Real-Time</div>
+<div class="card-grid">
+<div class="card"><div class="card-label">Balance</div><div class="card-value" id="stats-balance">$0.00</div></div>
+<div class="card"><div class="card-label">Open Contracts</div><div class="card-value" id="stats-open">0</div></div>
+<div class="card"><div class="card-label">Total Wins</div><div class="card-value positive" id="stats-wins">0</div></div>
+<div class="card"><div class="card-label">Total Losses</div><div class="card-value negative" id="stats-losses">0</div></div>
+</div>
+<div class="row-2" style="flex:1;min-height:0;">
+<div class="panel-card">
+<div class="panel-card-header"><span>Open Contracts Detail</span><span class="text-muted" style="font-size:11px;">Live updates via WebSocket</span></div>
+<div class="panel-card-body">
+<table class="data-table"><thead><tr><th>ID</th><th>Type</th><th>Stake</th><th>Entry</th><th>Current</th><th>P/L</th><th>Status</th></tr></thead>
+<tbody id="contracts-tbody"><tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px 0;">No active contracts. Start the engine to begin trading.</td></tr></tbody>
+</table>
+</div>
+</div>
+<div class="panel-card">
+<div class="panel-card-header">Session Metrics</div>
+<div class="panel-card-body">
+<div class="card" style="margin-bottom:12px;"><div class="card-label">Session P/L</div><div class="card-value" id="stats-pl">$0.00</div><div class="card-sub">Target: +$0.25 (5% growth)</div></div>
+<div class="card" style="margin-bottom:12px;"><div class="card-label">Win Rate</div><div class="card-value" id="stats-rate">0%</div><div class="card-sub" id="stats-wl">0 wins / 0 losses</div></div>
+<div class="card"><div class="card-label">Consecutive Losses</div><div class="card-value" id="stats-consec">0</div><div class="card-sub">Limit: 3 (auto-stop)</div></div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="panel" id="chart">
+<div class="panel-header">Live Market Data — Volatility 10 (1s)</div>
+<div class="chart-container">
+<canvas id="chartCanvas" class="chart-canvas"></canvas>
+<div class="chart-overlay">
+<button class="chart-btn active" data-tf="1m">1m</button>
+<button class="chart-btn" data-tf="5m">5m</button>
+<button class="chart-btn" data-tf="ticks">Ticks</button>
+</div>
+</div>
+</div>
+
+<div class="panel" id="options">
+<div class="panel-header">Trade Configuration</div>
+<div class="row-2" style="flex:1;min-height:0;">
+<div class="panel-card">
+<div class="panel-card-header">Strategy Selection</div>
+<div class="panel-card-body">
+<div class="form-group"><label class="form-label">Contract Type</label><select class="form-select" id="contract-type">
+<option value="ACCU">Accumulator (ACCU)</option>
+<option value="CALL">Rise / Fall (CALL)</option>
+<option value="PUT">Rise / Fall (PUT)</option>
+<option value="MULTUP">Multipliers (MULTUP)</option>
+<option value="MULTDOWN">Multipliers (MULTDOWN)</option>
+<option value="ONETOUCH">Touch / No Touch</option>
+<option value="NOTOUCH">Touch / No Touch</option>
+<option value="OVER">Digits Over / Under</option>
+<option value="UNDER">Digits Over / Under</option>
+<option value="HIGHER">Higher / Lower</option>
+<option value="LOWER">Higher / Lower</option>
+<option value="DIGITEVEN">Even / Odd</option>
+<option value="DIGITODD">Even / Odd</option>
+<option value="DIGITMATCH">Match / Differ</option>
+<option value="DIGITDIFF">Match / Differ</option>
+</select></div>
+<div class="form-group"><label class="form-label">Symbol</label><input type="text" class="form-input" value="R_10" disabled></div>
+<div class="form-group"><label class="form-label">Duration / Tick Size</label><select class="form-select" id="duration-select"><option>2 ticks</option><option>5 ticks</option><option>1 minute</option><option>5 minutes</option></select></div>
+<div class="form-group"><label class="form-label">Growth Rate (Accumulators Only)</label><input type="text" class="form-input" value="1% (0.01) — LOCKED" disabled></div>
+</div>
+</div>
+<div class="panel-card">
+<div class="panel-card-header">Risk Management</div>
+<div class="panel-card-body">
+<div class="form-group"><label class="form-label">Stake Per Trade ($)</label><input type="number" class="form-input" id="opt-stake" value="0.35" step="0.01" min="0.01" max="1.00"><div class="card-sub">Min: $1.00 on Deriv. Auto-compound when balance grows.</div></div>
+<div class="form-group"><label class="form-label">Max Daily Loss ($)</label><input type="number" class="form-input" id="max-loss" value="1.00" step="0.01"></div>
+<div class="form-group"><label class="form-label">Max Consecutive Losses</label><input type="number" class="form-input" id="max-consec" value="3" step="1" min="1" max="10"></div>
+<div class="form-group"><label class="form-label">Take Profit Target ($)</label><input type="number" class="form-input" id="tp-target" value="0.25" step="0.01"><div class="card-sub">5% of $5.00 capital. Bot stops when reached.</div></div>
+<div class="form-group"><label class="form-label">Trailing Stop Step (Multipliers)</label><input type="text" class="form-input" value="0.00075 — AUTO" disabled></div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="panel" id="settings">
+<div class="panel-header">System Settings</div>
+<div class="row-2" style="flex:1;min-height:0;">
+<div class="panel-card">
+<div class="panel-card-header">Appearance</div>
+<div class="panel-card-body">
+<div class="form-group"><label class="form-label">Design Theme</label><select class="form-select" id="theme-selector">
+<option value="void" selected>Void Terminal (Purple)</option>
+<option value="ice">Ice Terminal (Blue)</option>
+<option value="matrix">Matrix Terminal (Green)</option>
+</select></div>
+<div class="toggle-row"><span class="toggle-label">Sound Alerts</span><div class="toggle" id="toggle-sound"><div class="toggle-knob"></div></div></div>
+<div class="toggle-row"><span class="toggle-label">Desktop Notifications</span><div class="toggle active" id="toggle-notif"><div class="toggle-knob"></div></div></div>
+<div class="toggle-row"><span class="toggle-label">Auto-Restart Engine on Crash</span><div class="toggle active" id="toggle-restart"><div class="toggle-knob"></div></div></div>
+<div class="form-group" style="margin-top:20px;"><label class="form-label">Log Verbosity</label><select class="form-select" id="log-level"><option>Debug (everything)</option><option>Info (trades + errors)</option><option>Warning (errors only)</option></select></div>
+</div>
+</div>
+<div class="panel-card">
+<div class="panel-card-header">System Control</div>
+<div class="panel-card-body">
+<div class="form-group"><label class="form-label">Cache & Session Data</label><div class="card" style="margin-bottom:12px;"><div class="flex-between"><span class="text-muted" style="font-size:13px;">Session Stats</span><span class="text-success" style="font-size:13px;font-family:var(--font-mono);" id="cache-size">0.2 KB</span></div></div><button class="btn btn-danger" style="width:100%;" id="btn-clear-cache">Clear Cache & Reset Stats</button><div class="card-sub" style="margin-top:8px;">Resets wins, losses, P/L, and trade history to zero. Does not affect open contracts.</div></div>
+<div class="form-group" style="margin-top:24px;"><label class="form-label">WebSocket Connection</label><div class="flex-between" style="margin-bottom:12px;"><span class="text-muted" style="font-size:13px;">Endpoint</span><span style="font-family:var(--font-mono);font-size:12px;">wss://ws.derivws.com/websockets/v3</span></div><div class="flex-between" style="margin-bottom:12px;"><span class="text-muted" style="font-size:13px;">Status</span><span class="status-pill" id="ws-pill"><span class="status-dot offline" id="ws-dot"></span><span style="color:var(--danger)" id="ws-text">Offline</span></span></div><button class="btn btn-outline" style="width:100%;" id="btn-restart-ws">Restart WebSocket Connection</button></div>
+<div class="form-group" style="margin-top:24px;"><label class="form-label">Engine Version</label><div class="flex-between"><span style="font-family:var(--font-mono);font-size:14px;">d3khan-v1.0.0-alpha</span><span class="text-muted" style="font-size:11px;">Build 2026.06.11</span></div></div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="panel" id="logs">
+<div class="panel-header">System Logs — Full Terminal Output</div>
+<div class="panel-card" style="flex:1;">
+<div class="panel-card-header"><span>d3khan@quant-terminal:~$ tail -f /var/log/d3khan/engine.log</span><div class="flex-between gap-2"><button class="btn btn-sm btn-outline" id="btn-export-logs">Export</button><button class="btn btn-sm btn-outline" id="btn-clear-logs">Clear</button></div></div>
+<div class="panel-card-body" id="full-logs"></div>
+</div>
+</div>
+
+</main>
+</div>
+
+<script src="/static/js/utils.js"></script>
+<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/stats.js"></script>
+<script src="/static/js/chart.js"></script>
+<script src="/static/js/options.js"></script>
+<script src="/static/js/settings.js"></script>
+<script src="/static/js/logs.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
