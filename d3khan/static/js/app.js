@@ -3,7 +3,7 @@ const App = {
     state: {
         engineRunning: false, tradingEnabled: false, wsConnected: false, daemonOnline: false,
         balance: 0, sessionPL: 0, totalTrades: 0, activeTrades: 0, wins: 0, losses: 0, consecutiveLosses: 0,
-        stake: 0.35, maxLoss: 1.00, maxConsec: 3, tpTarget: 0.25,
+        stake: 1.00, maxLoss: 1.00, maxConsec: 3, tpTarget: 0.25,
         soundEnabled: false, notifEnabled: true, autoRestart: true, logs: [], notifCount: 0,
         demoMode: false, currentStrategy: 'DUMMY_RISE_FALL'
     },
@@ -86,6 +86,22 @@ const App = {
             this.updateConnectionStatus(true);
             Utils.toast('WebSocket connected', 'success');
             this.send({ action: 'ping' });
+
+            const contractType = document.getElementById('contract-type')?.value || 'ACCU';
+            const stake = parseFloat(document.getElementById('opt-stake')?.value) || 1.0;
+            const maxLoss = parseFloat(document.getElementById('max-loss')?.value) || 1.0;
+            const maxConsec = parseInt(document.getElementById('max-consec')?.value) || 3;
+            const tpTarget = parseFloat(document.getElementById('tp-target')?.value) || 0.25;
+            this.send({
+                action: 'set_options',
+                options: {
+                    contract_type: contractType,
+                    stake: stake,
+                    max_loss: maxLoss,
+                    max_consec: maxConsec,
+                    tp_target: tpTarget
+                }
+            });
         };
 
         this.ws.onclose = () => {
@@ -121,12 +137,39 @@ const App = {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
     },
 
+    _updateStatsDOM() {
+        const statsPl = document.getElementById('stats-pl');
+        if (statsPl) {
+            const pl = this.state.sessionPL;
+            statsPl.textContent = (pl >= 0 ? '+' : '-') + '$' + Math.abs(pl).toFixed(2);
+            statsPl.className = 'card-value ' + (pl >= 0 ? 'positive' : 'negative');
+        }
+        const statsRate = document.getElementById('stats-rate');
+        const statsWl = document.getElementById('stats-wl');
+        const total = this.state.wins + this.state.losses;
+        const rate = total > 0 ? Math.round(this.state.wins / total * 100) : 0;
+        if (statsRate) statsRate.textContent = rate + '%';
+        if (statsWl) statsWl.textContent = this.state.wins + ' wins / ' + this.state.losses + ' losses';
+        const statsConsec = document.getElementById('stats-consec');
+        if (statsConsec) statsConsec.textContent = this.state.consecutiveLosses;
+    },
+
     handleMessage(msg) {
         switch (msg.type) {
             case 'init':
                 this.state.demoMode = msg.demo_mode || false;
                 const badge = document.getElementById('demo-badge-sidebar');
                 if (badge) badge.classList.toggle('hidden', !this.state.demoMode);
+
+                if (msg.version) {
+                    const verEl = document.getElementById('engine-version');
+                    if (verEl) verEl.textContent = msg.version;
+                }
+                if (msg.build) {
+                    const buildEl = document.getElementById('engine-build');
+                    if (buildEl) buildEl.textContent = 'Build ' + msg.build;
+                }
+
                 if (msg.state) {
                     const s = msg.state;
                     this.state.balance = (s.balance !== undefined && s.balance !== null) ? s.balance : 0;
@@ -137,12 +180,14 @@ const App = {
                     this.state.activeTrades = (s.open_contracts || []).length;
                     this.state.engineRunning = s.is_running || false;
                     this.state.tradingEnabled = s.is_trading_enabled || false;
+                    this.state.consecutiveLosses = 0;
                 }
                 if (msg.ticks && msg.ticks.length > 0) {
                     Chart.onTickHistory(msg.ticks);
                 }
                 Dashboard.render();
                 Stats.render();
+                this._updateStatsDOM();
                 break;
 
             case 'balance':
@@ -151,6 +196,7 @@ const App = {
                 Dashboard.updateBalance(msg.balance);
                 Dashboard.updatePL(msg.session_pl);
                 Stats.updateBalance(msg.balance);
+                this._updateStatsDOM();
                 break;
 
             case 'tick':
@@ -179,6 +225,7 @@ const App = {
                 Dashboard.updatePL(this.state.sessionPL);
                 Stats.updateContractClosed(msg.contract_id, msg.profit, msg.status);
                 Stats.updateMetrics(this.state);
+                this._updateStatsDOM();
                 Utils.toast('Trade closed: ' + (msg.profit > 0 ? '+' : '') + (msg.profit?.toFixed?.(2) || msg.profit), msg.profit > 0 ? 'success' : 'error');
                 break;
 
@@ -187,8 +234,10 @@ const App = {
                 break;
 
             case 'log':
-                Logs.add(msg.level, msg.message, msg.source, msg.timestamp);
-                Dashboard.addLog(msg.level, msg.message);
+                if (typeof Logs !== 'undefined' && Logs.shouldShow && Logs.shouldShow(msg.level)) {
+                    Logs.add(msg.level, msg.message, msg.source, msg.timestamp);
+                    Dashboard.addLog(msg.level, msg.message);
+                }
                 break;
 
             case 'trading_status':
@@ -218,6 +267,10 @@ const App = {
 
             case 'stats':
                 Stats.updateFromServer(msg.stats);
+                break;
+
+            case 'cache_cleared':
+                Utils.toast('Server cache and stats reset', 'success');
                 break;
 
             case 'pong':

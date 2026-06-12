@@ -1,47 +1,153 @@
 const Settings = {
     init() {
+        this.bindEvents();
+        this.loadToggles();
+        this.loadLogLevel();
+        this.updateCacheSize();
+    },
+
+    bindEvents() {
         const themeSel = document.getElementById('theme-selector');
         if (themeSel) {
             themeSel.addEventListener('change', (e) => {
-                const t = e.target.value;
-                document.body.setAttribute('data-theme', t);
-                localStorage.setItem('d3khan-theme', t);
-                App.setFavicon(t);
-                Utils.toast('Theme switched to ' + t, 'success');
-                if (document.getElementById('chart').classList.contains('active')) Chart.draw();
+                const theme = e.target.value;
+                document.body.setAttribute('data-theme', theme);
+                localStorage.setItem('d3khan-theme', theme);
+                if (typeof App !== 'undefined') App.setFavicon(theme);
             });
         }
 
-        document.getElementById('toggle-sound')?.addEventListener('click', function() {
-            this.classList.toggle('active');
-            App.state.soundEnabled = this.classList.contains('active');
+        const sound = document.getElementById('toggle-sound');
+        const notif = document.getElementById('toggle-notif');
+        const restart = document.getElementById('toggle-restart');
+
+        if (sound) sound.addEventListener('click', () => {
+            sound.classList.toggle('active');
+            const on = sound.classList.contains('active');
+            localStorage.setItem('d3khan-sound', on ? 'true' : 'false');
+            if (typeof App !== 'undefined') App.state.soundEnabled = on;
         });
-        document.getElementById('toggle-notif')?.addEventListener('click', async function() {
-            this.classList.toggle('active');
-            App.state.notifEnabled = this.classList.contains('active');
-            if (App.state.notifEnabled) {
-                const ok = await Utils.requestNotificationPermission();
-                if (!ok) { this.classList.remove('active'); App.state.notifEnabled = false; Utils.toast('Notification permission denied', 'warning'); }
+
+        if (notif) notif.addEventListener('click', () => {
+            notif.classList.toggle('active');
+            const on = notif.classList.contains('active');
+            localStorage.setItem('d3khan-notif', on ? 'true' : 'false');
+            if (typeof App !== 'undefined') App.state.notifEnabled = on;
+        });
+
+        if (restart) restart.addEventListener('click', () => {
+            restart.classList.toggle('active');
+            const on = restart.classList.contains('active');
+            localStorage.setItem('d3khan-restart', on ? 'true' : 'false');
+            if (typeof App !== 'undefined') App.state.autoRestart = on;
+        });
+
+        const logLevel = document.getElementById('log-level');
+        if (logLevel) {
+            logLevel.addEventListener('change', () => {
+                const raw = logLevel.value || '';
+                const level = raw.split(' ')[0].toLowerCase();
+                localStorage.setItem('d3khan-loglevel', level);
+                if (typeof Logs !== 'undefined' && Logs.level !== undefined) {
+                    Logs.level = level;
+                }
+            });
+        }
+
+        const clearCache = document.getElementById('btn-clear-cache');
+        if (clearCache) clearCache.addEventListener('click', async () => {
+            clearCache.disabled = true;
+            const originalText = clearCache.textContent;
+            clearCache.textContent = 'Clearing...';
+            try {
+                // Tell backend to clear DB and engine state
+                if (typeof App !== 'undefined' && App.send) {
+                    App.send({ action: 'clear_cache' });
+                }
+                // Clear frontend storage
+                localStorage.removeItem('d3khan-options');
+                // Clear local log display immediately
+                if (typeof Logs !== 'undefined' && Logs.clear) Logs.clear();
+                // Refresh stats from backend after a short delay
+                setTimeout(() => {
+                    if (typeof App !== 'undefined' && App.send) {
+                        App.send({ action: 'get_stats' });
+                    }
+                }, 200);
+                this.updateCacheSize();
+                if (typeof Utils !== 'undefined') Utils.toast('Cache cleared', 'success');
+            } catch (e) {
+                console.error('Clear cache error:', e);
+                if (typeof Utils !== 'undefined') Utils.toast('Clear cache failed', 'error');
+            } finally {
+                clearCache.disabled = false;
+                clearCache.textContent = originalText;
             }
         });
-        document.getElementById('toggle-restart')?.addEventListener('click', function() {
-            this.classList.toggle('active');
-            App.state.autoRestart = this.classList.contains('active');
-        });
 
-        document.getElementById('btn-clear-cache')?.addEventListener('click', () => {
-            if (!confirm('Reset all session stats to zero?')) return;
-            App.send({ action: 'clear_cache' });
-            App.state.sessionPL = 0; App.state.totalTrades = 0; App.state.wins = 0; App.state.losses = 0; App.state.consecutiveLosses = 0;
-            Dashboard.render();
-            Stats.render();
-            Utils.toast('Cache cleared. Stats reset.', 'success');
+        const restartWs = document.getElementById('btn-restart-ws');
+        if (restartWs) restartWs.addEventListener('click', () => {
+            if (typeof App !== 'undefined') {
+                App.ws.close();
+                setTimeout(() => App.initWebSocket(), 500);
+            }
         });
+    },
 
-        document.getElementById('btn-restart-ws')?.addEventListener('click', () => {
-            if (App.ws) App.ws.close();
-            App.initWebSocket();
-            Utils.toast('WebSocket restarting…', 'info');
-        });
+    loadToggles() {
+        const sound = document.getElementById('toggle-sound');
+        const notif = document.getElementById('toggle-notif');
+        const restart = document.getElementById('toggle-restart');
+
+        const soundOn = localStorage.getItem('d3khan-sound') === 'true';
+        const notifOn = localStorage.getItem('d3khan-notif') === 'true';
+        const restartOn = localStorage.getItem('d3khan-restart') === 'true';
+
+        if (sound) {
+            sound.classList.toggle('active', soundOn);
+            if (typeof App !== 'undefined') App.state.soundEnabled = soundOn;
+        }
+        if (notif) {
+            notif.classList.toggle('active', notifOn);
+            if (typeof App !== 'undefined') App.state.notifEnabled = notifOn;
+        }
+        if (restart) {
+            restart.classList.toggle('active', restartOn);
+            if (typeof App !== 'undefined') App.state.autoRestart = restartOn;
+        }
+    },
+
+    loadLogLevel() {
+        const logLevel = document.getElementById('log-level');
+        const saved = localStorage.getItem('d3khan-loglevel');
+        if (logLevel && saved) {
+            const options = Array.from(logLevel.options);
+            const match = options.find(o => o.value.toLowerCase().startsWith(saved));
+            if (match) logLevel.value = match.value;
+        }
+        if (typeof Logs !== 'undefined' && Logs.level !== undefined && saved) {
+            Logs.level = saved;
+        }
+    },
+
+    async updateCacheSize() {
+        const el = document.getElementById('cache-size');
+        if (!el) return;
+        try {
+            const res = await fetch('/api/cache-size');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            el.textContent = this.formatBytes(data.cache_size_bytes || 0);
+        } catch (e) {
+            el.textContent = '0 B';
+        }
+    },
+
+    formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 };

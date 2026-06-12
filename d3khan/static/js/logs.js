@@ -1,15 +1,29 @@
 const Logs = {
     entries: [],
+    level: 'debug',
+    LEVELS: { debug: 0, info: 1, warning: 2 },
 
     init() {
+        const saved = localStorage.getItem('d3khan-loglevel');
+        if (saved && this.LEVELS[saved] !== undefined) this.level = saved;
+
         document.getElementById('btn-clear-logs')?.addEventListener('click', () => this.clear());
         document.getElementById('btn-export-logs')?.addEventListener('click', () => this.export());
     },
 
+    shouldShow(level) {
+        const current = this.LEVELS[this.level] || 0;
+        const incoming = this.LEVELS[level] || 0;
+        return incoming >= current;
+    },
+
     add(level, message, source, timestamp) {
+        if (!this.shouldShow(level)) return;
+
         const time = timestamp ? new Date(timestamp).toLocaleTimeString('en-GB') : new Date().toLocaleTimeString('en-GB');
         const html = '<div class="log-entry"><span class="log-time">' + time + '</span><span class="log-' + level + '">[' + (source || 'engine') + '] ' + message + '</span></div>';
         this.entries.push(html);
+
         const full = document.getElementById('full-logs');
         if (full) {
             full.insertBefore(this.htmlToElement(html), full.firstChild);
@@ -27,7 +41,7 @@ const Logs = {
         this.entries = [];
         const full = document.getElementById('full-logs');
         if (full) full.innerHTML = '<div class="log-entry"><span class="log-time">' + new Date().toLocaleTimeString('en-GB') + '</span><span class="log-system">[SYS] Logs cleared by user.</span></div>';
-        Utils.toast('Logs cleared', 'info');
+        if (typeof Utils !== 'undefined') Utils.toast('Logs cleared', 'info');
     },
 
     export() {
@@ -36,6 +50,6 @@ const Logs = {
         a.href = URL.createObjectURL(blob);
         a.download = 'd3khan_logs_' + Date.now() + '.txt';
         a.click();
-        Utils.toast('Logs exported', 'success');
+        if (typeof Utils !== 'undefined') Utils.toast('Logs exported', 'success');
     }
 };

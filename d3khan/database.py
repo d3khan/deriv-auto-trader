@@ -11,6 +11,7 @@ class Database:
     async def connect(self):
         self._conn = await aiosqlite.connect(self.db_path)
         await self._conn.execute("PRAGMA foreign_keys = ON")
+        await self._conn.execute("PRAGMA journal_mode = WAL")
         await self._create_tables()
         await self._conn.commit()
 
@@ -59,6 +60,11 @@ class Database:
                 message TEXT,
                 source TEXT
             );
+
+            CREATE INDEX IF NOT EXISTS idx_trades_session ON trades(session_id);
+            CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
+            CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
+            CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(timestamp);
         """)
 
     async def execute(self, query: str, params: tuple = ()):
@@ -77,3 +83,17 @@ class Database:
     async def fetchall(self, query: str, params: tuple = ()):
         cursor = await self.execute(query, params)
         return await cursor.fetchall()
+
+    async def clear_session_stats(self, session_id: int):
+        """Reset all counters and delete trades for a session."""
+        await self.execute(
+            "UPDATE sessions SET total_trades=0, wins=0, losses=0, profit=0 WHERE id=?",
+            (session_id,)
+        )
+        await self.execute("DELETE FROM trades WHERE session_id=?", (session_id,))
+        await self.commit()
+
+    async def clear_logs(self):
+        """Truncate the logs table."""
+        await self.execute("DELETE FROM logs")
+        await self.commit()

@@ -98,7 +98,7 @@ class StrategyEngine:
             return self._multiplier_signal()
         elif self.strategy in ["ONETOUCH", "NOTOUCH"]:
             return self._touch_signal()
-        elif self.strategy in ["OVER", "UNDER"]:
+        elif self.strategy in ["DIGITOVER", "DIGITUNDER"]:
             return self._digit_over_under_signal()
         elif self.strategy in ["HIGHER", "LOWER"]:
             return self._higher_lower_signal()
@@ -144,7 +144,7 @@ class StrategyEngine:
             return None
         price = self.indicators.prices[-1]
         dist_from_middle = abs(price - bb["middle"]) / bb["middle"]
-        if dist_from_middle < 0.001:
+        if dist_from_middle < 0.05:
             return {
                 "action": "buy",
                 "contract_type": "ACCU",
@@ -179,9 +179,9 @@ class StrategyEngine:
         if not bb["upper"]:
             return None
         if price < bb["lower"] * 1.001:
-            return {"action": "buy", "contract_type": "ONETOUCH", "barrier": bb["upper"], "duration": 5, "duration_unit": "m"}
+            return {"action": "buy", "contract_type": "ONETOUCH", "barrier": "+0.500", "duration": 5, "duration_unit": "m"}
         elif price > bb["upper"] * 0.999:
-            return {"action": "buy", "contract_type": "NOTOUCH", "barrier": bb["upper"] * 1.02, "duration": 5, "duration_unit": "m"}
+            return {"action": "buy", "contract_type": "NOTOUCH", "barrier": "+0.500", "duration": 5, "duration_unit": "m"}
         return None
 
     def _digit_over_under_signal(self) -> Optional[Dict[str, Any]]:
@@ -189,9 +189,9 @@ class StrategyEngine:
             return None
         rsi = self.indicators.rsi(14)
         if rsi > 60:
-            return {"action": "buy", "contract_type": "OVER", "barrier": 5, "duration": 1, "duration_unit": "t"}
+            return {"action": "buy", "contract_type": "DIGITOVER", "barrier": "5", "duration": 1, "duration_unit": "t"}
         elif rsi < 40:
-            return {"action": "buy", "contract_type": "UNDER", "barrier": 5, "duration": 1, "duration_unit": "t"}
+            return {"action": "buy", "contract_type": "DIGITUNDER", "barrier": "4", "duration": 1, "duration_unit": "t"}
         return None
 
     def _higher_lower_signal(self) -> Optional[Dict[str, Any]]:
@@ -200,9 +200,9 @@ class StrategyEngine:
         ema8 = self.indicators.ema(8)
         ema21 = self.indicators.ema(21)
         if ema8 > ema21:
-            return {"action": "buy", "contract_type": "CALL", "barrier": "+0.000", "duration": 5, "duration_unit": "t"}
+            return {"action": "buy", "contract_type": "HIGHER", "barrier": "+0.438", "duration": 5, "duration_unit": "t"}
         else:
-            return {"action": "buy", "contract_type": "PUT", "barrier": "-0.000", "duration": 5, "duration_unit": "t"}
+            return {"action": "buy", "contract_type": "LOWER", "barrier": "-0.438", "duration": 5, "duration_unit": "t"}
 
     def _even_odd_signal(self) -> Optional[Dict[str, Any]]:
         if not self.indicators.ticks or len(self.indicators.ticks) < 10:
@@ -221,6 +221,6 @@ class StrategyEngine:
         last_digit = int(str(self.indicators.ticks[-1]["quote"])[-1])
         prev_digit = int(str(self.indicators.ticks[-2]["quote"])[-1])
         if last_digit == prev_digit:
-            return {"action": "buy", "contract_type": "DIGITMATCH", "duration": 1, "duration_unit": "t"}
+            return {"action": "buy", "contract_type": "DIGITMATCH", "barrier": str(last_digit), "duration": 1, "duration_unit": "t"}
         else:
-            return {"action": "buy", "contract_type": "DIGITDIFF", "duration": 1, "duration_unit": "t"}
+            return {"action": "buy", "contract_type": "DIGITDIFF", "barrier": str(last_digit), "duration": 1, "duration_unit": "t"}

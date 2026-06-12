@@ -44,6 +44,19 @@ async def health():
         "version": VERSION
     }
 
+@app.get("/api/cache-size")
+async def cache_size():
+    """Return the size of the session cache temp file (not the DB)."""
+    return {
+        "cache_size_bytes": engine.session_cache.file_size,
+    }
+
+@app.post("/api/clear-cache")
+async def clear_cache_http():
+    """HTTP fallback for clearing the session cache."""
+    await engine.clear_cache()
+    return {"status": "ok", "message": "Cache cleared"}
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -68,6 +81,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 } if engine.state.current_session else None
             },
             "version": VERSION,
+            "build": BUILD_NUMBER,
             "demo_mode": engine._demo_mode,
             "ticks": engine.ticks[-500:],
             "candles_1m": engine.candles_1m,
@@ -88,6 +102,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 await engine.set_trading_enabled(msg.get("enabled", False))
             elif action == "set_strategy":
                 await engine.set_strategy(msg.get("strategy", "DUMMY_RISE_FALL"))
+            elif action == "set_options":
+                await engine.set_options(msg.get("options", {}))
             elif action == "get_stats":
                 stats = await engine.get_stats()
                 await websocket.send_json({"type": "stats", "stats": stats})
@@ -96,9 +112,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 logs = [{"id": r[0], "timestamp": r[1], "level": r[2], "message": r[3], "source": r[4]} for r in rows]
                 await websocket.send_json({"type": "logs", "logs": logs})
             elif action == "clear_cache":
-                await engine.db.execute("DELETE FROM logs")
-                await engine.db.execute("DELETE FROM trades WHERE status = 'open'")
-                await engine.db.commit()
+                await engine.clear_cache()
                 await websocket.send_json({"type": "cache_cleared"})
             elif action == "ping":
                 await websocket.send_json({"type": "pong"})

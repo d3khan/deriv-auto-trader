@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="/static/css/themes.css">
     <link rel="stylesheet" href="/static/css/base.css">
     <base target="_blank">
+<base target="_blank">
 </head>
 
 <body data-theme="void">
@@ -112,9 +113,8 @@
                             </div>
                             <div class="form-group" style="margin-top:24px;">
                                 <div class="form-label">Quick Stake Override</div><input type="number"
-                                    class="form-input" id="stake-input" value="0.35" step="0.01" min="0.01" max="1.00">
-                                <div class="card-sub" style="margin-top:6px;">Max allowed: $1.00 (7% of $5.00 balance
-                                    rule)</div>
+                                    class="form-input" id="stake-input" value="1.00" step="0.01" min="1.00" max="5.00">
+                                <div class="card-sub" style="margin-top:6px;">Min: $1.00 | Max: $5.00</div>
                             </div>
                             <div class="flex-between mt-2" style="margin-top:20px;"><span class="text-muted"
                                     style="font-size:12px;">Daemon Status</span><span class="status-pill"
@@ -199,7 +199,8 @@
             <div class="panel" id="chart">
                 <div class="panel-header">Live Market Data — Volatility 10 (1s)</div>
                 <div class="chart-container" style="display:flex;flex-direction:column;">
-                    <div class="chart-controls" style="display:flex;gap:8px;margin-bottom:8px;padding:0 10px;flex-shrink:0;">
+                    <div class="chart-controls"
+                        style="display:flex;gap:8px;margin-bottom:8px;padding:0 10px;flex-shrink:0;">
                         <button class="chart-btn active" data-chart="ticks">Ticks</button>
                         <button class="chart-btn" data-chart="candles">Candles</button>
                     </div>
@@ -209,41 +210,47 @@
                             <div id="lwChart" style="width:100%;height:100%;"></div>
                         </div>
                         <!-- Candles: TradingView Widget -->
-                        <div id="chart-candles" style="position:absolute;top:0;left:0;width:100%;height:100%;display:none;">
-                            <div style="width:100%;height:100%;overflow:auto;display:flex;align-items:center;justify-content:center;">
-                                <!-- TradingView Widget BEGIN -->
+                        <div id="chart-candles"
+                            style="position:absolute;top:0;left:0;width:100%;height:100%;display:none;">
+                            <div
+                                style="width:100%;height:100%;overflow:auto;display:flex;align-items:center;justify-content:center;">
                                 <div class="tradingview-widget-container">
-                                  <div class="tradingview-widget-container__widget"></div>
-                                  <div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/symbols/DERIV-VOLATILITY_10_1S_INDEX/" rel="noopener nofollow" target="_blank"><span class="blue-text">VOLATILITY_10_1S_INDEX chart</span></a><span class="trademark"> by TradingView</span></div>
-                                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-                                  {
-                                  "allow_symbol_change": true,
-                                  "calendar": false,
-                                  "details": false,
-                                  "hide_side_toolbar": true,
-                                  "hide_top_toolbar": false,
-                                  "hide_legend": true,
-                                  "hide_volume": true,
-                                  "hotlist": false,
-                                  "interval": "1",
-                                  "locale": "en",
-                                  "save_image": true,
-                                  "style": "1",
-                                  "symbol": "DERIV:VOLATILITY_10_1S_INDEX",
-                                  "theme": "dark",
-                                  "timezone": "Africa/Lagos",
-                                  "backgroundColor": "#0F0F0F",
-                                  "gridColor": "rgba(242, 242, 242, 0.06)",
-                                  "watchlist": [],
-                                  "withdateranges": true,
-                                  "compareSymbols": [],
-                                  "studies": [],
-                                  "width": 1280,
-                                  "height": 720
-                                }
-                                  </script>
+                                    <div class="tradingview-widget-container__widget"></div>
+                                    <div class="tradingview-widget-copyright"><a
+                                            href="https://www.tradingview.com/symbols/DERIV-VOLATILITY_10_1S_INDEX/"
+                                            rel="noopener nofollow" target="_blank"><span
+                                                class="blue-text">VOLATILITY_10_1S_INDEX chart</span></a><span
+                                            class="trademark"> by TradingView</span></div>
+                                    <script type="text/javascript"
+                                        src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js"
+                                        async>
+                                            {
+                                                "allow_symbol_change": true,
+                                                    "calendar": false,
+                                                        "details": false,
+                                                            "hide_side_toolbar": true,
+                                                                "hide_top_toolbar": false,
+                                                                    "hide_legend": true,
+                                                                        "hide_volume": true,
+                                                                            "hotlist": false,
+                                                                                "interval": "1",
+                                                                                    "locale": "en",
+                                                                                        "save_image": true,
+                                                                                            "style": "1",
+                                                                                                "symbol": "DERIV:VOLATILITY_10_1S_INDEX",
+                                                                                                    "theme": "dark",
+                                                                                                        "timezone": "Etc/UTC",
+                                                                                                            "backgroundColor": "#0F0F0F",
+                                                                                                                "gridColor": "rgba(242, 242, 242, 0.06)",
+                                                                                                                    "watchlist": [],
+                                                                                                                        "withdateranges": true,
+                                                                                                                            "compareSymbols": [],
+                                                                                                                                "studies": [],
+                                                                                                                                    "width": 1280,
+                                                                                                                                        "height": 720
+                                            }
+                                        </script>
                                 </div>
-                                <!-- TradingView Widget END -->
                             </div>
                         </div>
                     </div>
@@ -259,20 +266,21 @@
                             <div class="form-group"><label class="form-label">Contract Type</label><select
                                     class="form-select" id="contract-type">
                                     <option value="ACCU">Accumulator (ACCU)</option>
-                                    <option value="CALL">Rise / Fall (CALL)</option>
-                                    <option value="PUT">Rise / Fall (PUT)</option>
-                                    <option value="MULTUP">Multipliers (MULTUP)</option>
-                                    <option value="MULTDOWN">Multipliers (MULTDOWN)</option>
-                                    <option value="ONETOUCH">Touch / No Touch</option>
-                                    <option value="NOTOUCH">Touch / No Touch</option>
-                                    <option value="OVER">Digits Over / Under</option>
-                                    <option value="UNDER">Digits Over / Under</option>
-                                    <option value="HIGHER">Higher / Lower</option>
-                                    <option value="LOWER">Higher / Lower</option>
-                                    <option value="DIGITEVEN">Even / Odd</option>
-                                    <option value="DIGITODD">Even / Odd</option>
-                                    <option value="DIGITMATCH">Match / Differ</option>
-                                    <option value="DIGITDIFF">Match / Differ</option>
+                                    <option value="CALL">Rise / Fall — CALL</option>
+                                    <option value="PUT">Rise / Fall — PUT</option>
+                                    <option value="MULTUP">Multipliers — MULTUP</option>
+                                    <option value="MULTDOWN">Multipliers — MULTDOWN</option>
+                                    <option value="ONETOUCH">Touch / No Touch — ONETOUCH</option>
+                                    <option value="NOTOUCH">Touch / No Touch — NOTOUCH</option>
+                                    <option value="OVER">Digits Over / Under — OVER</option>
+                                    <option value="UNDER">Digits Over / Under — UNDER</option>
+                                    <option value="HIGHER">Higher / Lower — HIGHER</option>
+                                    <option value="LOWER">Higher / Lower — LOWER</option>
+                                    <option value="DIGITEVEN">Even / Odd — DIGITEVEN</option>
+                                    <option value="DIGITODD">Even / Odd — DIGITODD</option>
+                                    <option value="DIGITMATCH">Match / Differ — DIGITMATCH</option>
+                                    <option value="DIGITDIFF">Match / Differ — DIGITDIFF</option>
+                                    <option value="DUMMY_RISE_FALL">DUMMY_RISE_FALL (Test Strategy)</option>
                                 </select></div>
                             <div class="form-group"><label class="form-label">Symbol</label><input type="text"
                                     class="form-input" value="R_10" disabled></div>
@@ -292,9 +300,9 @@
                         <div class="panel-card-header">Risk Management</div>
                         <div class="panel-card-body">
                             <div class="form-group"><label class="form-label">Stake Per Trade ($)</label><input
-                                    type="number" class="form-input" id="opt-stake" value="0.35" step="0.01" min="0.01"
-                                    max="1.00">
-                                <div class="card-sub">Min: $1.00 on Deriv. Auto-compound when balance grows.</div>
+                                    type="number" class="form-input" id="opt-stake" value="1.00" step="0.01" min="1.00"
+                                    max="5.00">
+                                <div class="card-sub">Min: $1.00 | Max: $5.00 on Deriv.</div>
                             </div>
                             <div class="form-group"><label class="form-label">Max Daily Loss ($)</label><input
                                     type="number" class="form-input" id="max-loss" value="1.00" step="0.01"></div>
@@ -355,8 +363,8 @@
                                 <div class="card" style="margin-bottom:12px;">
                                     <div class="flex-between"><span class="text-muted" style="font-size:13px;">Session
                                             Stats</span><span class="text-success"
-                                            style="font-size:13px;font-family:var(--font-mono);" id="cache-size">0.2
-                                            KB</span></div>
+                                            style="font-size:13px;font-family:var(--font-mono);" id="cache-size">0
+                                            B</span></div>
                                 </div><button class="btn btn-danger" style="width:100%;" id="btn-clear-cache">Clear
                                     Cache & Reset Stats</button>
                                 <div class="card-sub" style="margin-top:8px;">Resets wins, losses, P/L, and trade
@@ -377,9 +385,12 @@
                             </div>
                             <div class="form-group" style="margin-top:24px;"><label class="form-label">Engine
                                     Version</label>
-                                <div class="flex-between"><span
-                                        style="font-family:var(--font-mono);font-size:14px;">d3khan-v1.0.0-alpha</span><span
-                                        class="text-muted" style="font-size:11px;">Build 2026.06.11</span></div>
+                                <div class="flex-between">
+                                    <span id="engine-version"
+                                        style="font-family:var(--font-mono);font-size:14px;">d3khan-v1.0.0-alpha</span>
+                                    <span id="engine-build" class="text-muted" style="font-size:11px;">Build
+                                        2026.06.11</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -410,6 +421,16 @@
     <script src="/static/js/settings.js"></script>
     <script src="/static/js/logs.js"></script>
     <script src="/static/js/app.js"></script>
+<script>
+(function(){
+    fetch('/api/config').then(r => r.json()).then(cfg => {
+        const ver = document.getElementById('engine-version');
+        const bld = document.getElementById('engine-build');
+        if (ver && cfg.version) ver.textContent = cfg.app_name + '-' + cfg.version;
+        if (bld && cfg.build) bld.textContent = 'Build ' + cfg.build;
+    }).catch(() => {});
+})();
+</script>
 </body>
 
 </html>

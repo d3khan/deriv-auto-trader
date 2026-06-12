@@ -27,7 +27,8 @@ class DerivClient:
         try:
             import ssl
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection('ws.derivws.com', 443, ssl=ssl.create_default_context()),
+                asyncio.open_connection('ws.derivws.com', 443, 
+ssl=ssl.create_default_context()),
                 timeout=5
             )
             writer.close()
@@ -62,7 +63,8 @@ class DerivClient:
         
         print("[Deriv] Sending authorize...")
         try:
-            auth = await asyncio.wait_for(self.api.authorize(self.token), timeout=60)
+            auth = await asyncio.wait_for(self.api.authorize(self.token), 
+timeout=60)
         except asyncio.TimeoutError:
             print("[Deriv] Authorize timed out after 60s")
             return False
@@ -94,7 +96,8 @@ class DerivClient:
         try:
             print("[Deriv] Subscribing to balance updates...")
             source = await self.api.subscribe({"balance": 1, "subscribe": 1})
-            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_balance_msg(msg)))
+            disp = source.subscribe(lambda msg: 
+asyncio.create_task(self._on_balance_msg(msg)))
             self._disposables.append(disp)
             print("[Deriv] Balance subscription active")
         except Exception as e:
@@ -112,7 +115,8 @@ class DerivClient:
         try:
             print(f"[Deriv] Subscribing to ticks: {symbol}")
             source = await self.api.subscribe({"ticks": symbol, "subscribe": 1})
-            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_tick_msg(msg)))
+            disp = source.subscribe(lambda msg: 
+asyncio.create_task(self._on_tick_msg(msg)))
             self._disposables.append(disp)
             print(f"[Deriv] Ticks active: {symbol}")
         except Exception as e:
@@ -135,7 +139,8 @@ class DerivClient:
                 "subscribe": 1
             }
             source = await self.api.subscribe(req)
-            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_candle_msg(msg)))
+            disp = source.subscribe(lambda msg: 
+asyncio.create_task(self._on_candle_msg(msg)))
             self._disposables.append(disp)
             print(f"[Deriv] Candles active: {symbol} {granularity}s")
         except Exception as e:
@@ -169,7 +174,8 @@ class DerivClient:
                 "subscribe": 1
             }
             source = await self.api.subscribe(req)
-            disp = source.subscribe(lambda msg: asyncio.create_task(self._on_contract_msg(msg)))
+            disp = source.subscribe(lambda msg: 
+asyncio.create_task(self._on_contract_msg(msg)))
             self._disposables.append(disp)
         except Exception as e:
             print(f"[Deriv] Contract subscribe error: {e}")
@@ -179,14 +185,40 @@ class DerivClient:
         if poc:
             await self._safe_callback("contract_update", poc)
 
+    # --- THE FIXED METHODS USING DIRECT api.send() ---
     async def get_proposal(self, proposal_req: dict):
-        return await asyncio.wait_for(self.api.proposal(proposal_req), timeout=10)
+        """Bypasses api.proposal wrapper to avoid dictionary type-check errors."""
+        return await asyncio.wait_for(self.api.send(proposal_req), timeout=10)
 
     async def buy_contract(self, proposal_id: str, price: float):
-        return await asyncio.wait_for(self.api.buy({"buy": proposal_id, "price": price}), timeout=10)
+        """
+        Buy a contract using a proposal ID and price.
+        Bypasses api.buy wrapper to avoid strictly typed dictionary execution errors.
+        """
+        buy_request = {
+            "buy": str(proposal_id),
+            "price": float(price)
+        }
+        print(f"[Deriv] Sending buy request: {buy_request}")
+        try:
+            result = await asyncio.wait_for(self.api.send(buy_request), timeout=10)
+            return result
+        except Exception as e:
+            print(f"[Deriv] Buy contract error: {type(e).__name__}: {e}")
+            raise
 
-    async def sell_contract(self, contract_id: str):
-        return await asyncio.wait_for(self.api.sell({"sell": contract_id}), timeout=10)
+    async def sell_contract(self, contract_id: str, price: float = 0.0):
+        """
+        Sells an open contract using its ID. 
+        Accepts the price argument passed down from engine.py to prevent TypeError.
+        """
+        sell_request = {
+            "sell": str(contract_id),
+            "price": float(price)
+        }
+        print(f"[Deriv] Sending sell request: {sell_request}")
+        return await asyncio.wait_for(self.api.send(sell_request), timeout=10)
+    # ---------------------------------
 
     async def close(self):
         for disp in self._disposables:

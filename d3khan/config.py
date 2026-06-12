@@ -2,15 +2,17 @@ import os
 
 # Identity
 APP_NAME = "d3khan"
-VERSION = "v1.0.0-alpha"
+VERSION = "v2.7.5-beta"
+BUILD_NUMBER = "2026.06.12"
 TOKEN = "Vqla5qYgKQ4xIi5" #Fall Back Token: "0VgnvWU66hbBWPS"
 APP_ID = 1089
 
 # Trading Config — LOCKED
 SYMBOL = "R_10"
 CAPITAL = 5.00
-STAKE = 0.35
-MAX_STAKE = 1.00
+STAKE = 1.00
+MIN_STAKE = 1.00      # Minimum stake per trade ($)
+MAX_STAKE = 5.00      # Maximum stake per trade ($)
 GROWTH_RATE = 0.01
 TAKE_PROFIT = 0.25
 MAX_DAILY_LOSS = 1.00
