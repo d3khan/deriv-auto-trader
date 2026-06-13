@@ -99,6 +99,7 @@ class StrategyEngine:
         self.tick_count = 0
         self.last_direction = "CALL"
         self._last_quick_dir = None
+        self._last_signal_tick = 0
 
     def update(self, tick: dict):
         self.indicators.update(tick)
@@ -132,6 +133,12 @@ class StrategyEngine:
             bb = self.indicators.bbands(20, 2)
             macd = self.indicators.macd(12, 26, 9)
             price = self.indicators.prices[-1]
+
+            # 0. Take profit — early sell when profit hits target
+            tp = contract.get("take_profit", 0)
+            if tp > 0 and contract.get("profit", 0) >= tp:
+                return f"Take profit hit: ${contract['profit']:.2f}"
+
             if bb["middle"] and price > 0:
                 # 1. Price too far from middle band
                 dist = abs(price - bb["middle"]) / bb["middle"]
@@ -193,40 +200,46 @@ class StrategyEngine:
         return None
 
     def _quick_rise_fall_signal(self) -> Optional[Dict[str, Any]]:
-        """Momentum scalping: 3 consecutive ticks in same direction → 7-tick expiry."""
-        if len(self.indicators.ticks) < 4:
-            return None
-        t1 = self.indicators.ticks[-3]["quote"]
-        t2 = self.indicators.ticks[-2]["quote"]
-        t3 = self.indicators.ticks[-1]["quote"]
-
-        # 3 consecutive up ticks → CALL (Rise)
-        if t1 < t2 < t3:
-            if self._last_quick_dir != "CALL":
-                self._last_quick_dir = "CALL"
-                return {
-                    "action": "buy",
-                    "contract_type": "CALL",
-                    "duration": 7,
-                    "duration_unit": "t",
-                    "reason": f"Quick rise: {t1:.3f}→{t2:.3f}→{t3:.3f}"
-                }
+        """
+        Perplexity EMA+RSI+Price Action Strategy for 5-tick Rise/Fall.
+        RISE: EMA8 > EMA21, RSI(7) > 50, price > prev tick, price > EMA21
+        FALL: EMA8 < EMA21, RSI(7) < 50, price < prev tick, price < EMA21
+        """
+        if len(self.indicators.prices) < 21:
             return None
 
-        # 3 consecutive down ticks → PUT (Fall)
-        if t1 > t2 > t3:
-            if self._last_quick_dir != "PUT":
-                self._last_quick_dir = "PUT"
-                return {
-                    "action": "buy",
-                    "contract_type": "PUT",
-                    "duration": 7,
-                    "duration_unit": "t",
-                    "reason": f"Quick fall: {t1:.3f}→{t2:.3f}→{t3:.3f}"
-                }
+        # Cooldown: minimum 3 ticks between signals
+        if self.tick_count - self._last_signal_tick < 3:
             return None
 
-        self._last_quick_dir = None
+        ema8 = self.indicators.ema(8)
+        ema21 = self.indicators.ema(21)
+        rsi = self.indicators.rsi(7)
+        current_price = self.indicators.prices[-1]
+        prev_price = self.indicators.prices[-2]
+
+        # RISE signal
+        if ema8 > ema21 and rsi > 50 and current_price > prev_price and current_price > ema21:
+            self._last_signal_tick = self.tick_count
+            return {
+                "action": "buy",
+                "contract_type": "CALL",
+                "duration": 5,
+                "duration_unit": "t",
+                "reason": f"RISE: EMA8({ema8:.2f})>EMA21({ema21:.2f}), RSI({rsi:.1f})>50, Price↑"
+            }
+
+        # FALL signal
+        if ema8 < ema21 and rsi < 50 and current_price < prev_price and current_price < ema21:
+            self._last_signal_tick = self.tick_count
+            return {
+                "action": "buy",
+                "contract_type": "PUT",
+                "duration": 5,
+                "duration_unit": "t",
+                "reason": f"FALL: EMA8({ema8:.2f})<<EMA21({ema21:.2f}), RSI({rsi:.1f})<<50, Price↓"
+            }
+
         return None
 
     def _rise_fall_signal(self) -> Optional[Dict[str, Any]]:
