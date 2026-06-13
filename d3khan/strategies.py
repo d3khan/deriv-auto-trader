@@ -22,7 +22,6 @@ class IndicatorState:
             return self.prices[-1] if self.prices else 0
         prices = self.prices[-period:]
         multiplier = 2 / (period + 1)
-        # Proper SMA seeding — matches TradingView/Deriv
         ema = sum(prices[:period]) / period
         for price in prices[period:]:
             ema = (price - ema) * multiplier + ema
@@ -48,7 +47,6 @@ class IndicatorState:
         return {"upper": middle + std_dev * std, "middle": middle, "lower": middle - std_dev * std}
 
     def macd(self, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
-        # Need full history for the signal line to converge
         if len(self.prices) < slow + signal + 50:
             return {"macd": 0, "signal": 0, "histogram": 0}
 
@@ -63,13 +61,11 @@ class IndicatorState:
                 emas.append(ema)
             return emas
 
-        # Use ALL available prices for proper EMA convergence
         prices = self.prices[:]
 
         fast_emas = calc_ema_series(prices, fast)
         slow_emas = calc_ema_series(prices, slow)
 
-        # Align fast and slow EMAs at the same price index
         macd_line = []
         fast_offset = slow - fast
         for i in range(len(slow_emas)):
@@ -133,11 +129,17 @@ class StrategyEngine:
             bb = self.indicators.bbands(20, 2)
             macd = self.indicators.macd(12, 26, 9)
             price = self.indicators.prices[-1]
+
+            # 0. Take profit — early sell when profit hits target
+            tp = contract.get("take_profit", 0)
+            if tp > 0 and contract.get("profit", 0) >= tp:
+                return f"Take profit hit: ${contract['profit']:.2f}"
+
             if bb["middle"] and price > 0:
                 # 1. Price too far from middle band
                 dist = abs(price - bb["middle"]) / bb["middle"]
-                if dist > 0.20:
-                    return "Price moved >20% from middle band"
+                if dist > 0.015:
+                    return "Price moved >1.5% from middle band"
 
                 # 2. MACD histogram (green/red bars) spike
                 if abs(macd["histogram"]) > 0.10:

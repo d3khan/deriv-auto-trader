@@ -474,20 +474,16 @@ class TradingEngine:
             if contract_id not in self.open_contracts:
                 return
             contract = self.open_contracts[contract_id]
-            # Simulate profit growth
             stake = contract.get("stake", self.stake)
             elapsed = int(datetime.now().timestamp()) - contract.get("entry_epoch", 0)
-            # Rough profit simulation: grows over time with noise
             simulated_profit = round((elapsed * 0.02) + (random.random() - 0.3) * 0.1, 2)
             if simulated_profit > stake * 0.95:
                 simulated_profit = round(stake * 0.95, 2)
             contract["profit"] = simulated_profit
-            # TP hit
             if tp > 0 and simulated_profit >= tp:
                 await self._close_trade(contract_id, simulated_profit, "won")
                 await self._log("info", f"DEMO TP hit: ${simulated_profit:.2f}")
                 return
-            # Max ticks / time fallback
             if elapsed > 15:
                 is_win = simulated_profit > 0
                 profit = round(simulated_profit, 2) if is_win else round(-stake, 2)
@@ -526,6 +522,7 @@ class TradingEngine:
             contract["barrier_upper"] = old.get("barrier_upper", 0)
             contract["barrier_lower"] = old.get("barrier_lower", 0)
             contract["max_profit"] = max(old.get("max_profit", 0), contract.get("profit", 0))
+            contract["take_profit"] = old.get("take_profit", 0)
             self.open_contracts[contract_id] = contract
             status = contract.get("status")
             if status in ("sold", "won", "lost"):
@@ -552,14 +549,12 @@ class TradingEngine:
             await self._broadcast({"type": "info", "message": "Take profit target reached"})
             return
 
-        # Validate signal integrity
         if not signal or not signal.get("contract_type"):
             await self._log("error", "Invalid signal: missing contract_type")
             return
 
         amount = self._get_stake(signal.get("contract_type", ""))
 
-        # FIXED: Removed the invalid 'underlying_symbol' property.
         proposal_req = {
             "proposal": 1,
             "amount": amount,
@@ -569,24 +564,16 @@ class TradingEngine:
             "symbol": DERIV_SYMBOL,
         }
 
-        # Duration & duration_unit
         if "duration" in signal:
             proposal_req["duration"] = signal["duration"]
             proposal_req["duration_unit"] = signal.get("duration_unit", "t")
 
-        # Barrier
         if "barrier" in signal:
             proposal_req["barrier"] = signal["barrier"]
 
-        # Growth rate — REQUIRED for ACCU
         if signal.get("contract_type") == "ACCU":
             proposal_req["growth_rate"] = float(GROWTH_RATE)
 
-        # Take profit — injected by strategy
-        if "take_profit" in signal:
-            proposal_req["take_profit"] = signal["take_profit"]
-
-        # Multiplier parameters
         if "multiplier" in signal:
             proposal_req["multiplier"] = signal["multiplier"]
             stop_pct = signal.get("stop_loss", MULTIPLIER_TRAILING_STOP)
@@ -619,7 +606,9 @@ class TradingEngine:
                 err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
                 await self._log("error", f"Buy failed: {err_msg}")
                 return
-            await self._on_buy(buy_response.get("buy", {}))
+            buy_data = buy_response.get("buy", {})
+            buy_data["take_profit"] = signal.get("take_profit", 0)
+            await self._on_buy(buy_data)
         except Exception as e:
             err_str = str(e) if str(e) else type(e).__name__
             await self._log("error", f"Trade execution error: {err_str}")
@@ -686,7 +675,6 @@ class TradingEngine:
         total = self.state.current_session.total_trades
         self.state.current_session.win_rate = (self.state.current_session.wins / total * 100) if total > 0 else 0
 
-        # Update session cache (temp file, NOT the DB)
         self.session_cache.record_trade(profit, self.state.current_session.id)
 
         await self._broadcast({
@@ -745,8 +733,6 @@ class TradingEngine:
         await self._log("info", f"Strategy changed to {strategy}")
 
     async def set_options(self, options: dict):
-        """Update trading options from frontend in real-time."""
-        # Preserve indicator state when switching strategies
         old_indicators = None
         old_tick_count = 0
         old_last_direction = "CALL"
@@ -767,7 +753,6 @@ class TradingEngine:
             new_strategy = options["contract_type"]
             if self.strategy_engine.strategy != new_strategy:
                 self.strategy_engine = StrategyEngine(new_strategy)
-                # Restore indicator state so we don't lose price history
                 if old_indicators:
                     self.strategy_engine.indicators = old_indicators
                     self.strategy_engine.tick_count = old_tick_count
@@ -778,12 +763,9 @@ class TradingEngine:
         return self.session_cache.get_stats()
 
     async def clear_cache(self):
-        """Clear session cache temp file + DB logs/trades for current session. Does NOT delete the session record."""
-        # 1. Clear temp cache file
         self.session_cache.clear()
         self.session_profit = 0.0
         self.consecutive_losses = 0
-        # NOTE: Do NOT clear open_contracts — we want to keep tracking open trades
         if self.state.current_session:
             self.state.current_session.total_trades = 0
             self.state.current_session.wins = 0
@@ -791,7 +773,6 @@ class TradingEngine:
             self.state.current_session.profit = 0
             self.state.current_session.win_rate = 0
 
-        # 2. Clear DB logs and trades for current session
         if self.state.current_session and self.state.current_session.id:
             await self.db.execute("DELETE FROM trades WHERE session_id=?", (self.state.current_session.id,))
             await self.db.execute("DELETE FROM logs")
