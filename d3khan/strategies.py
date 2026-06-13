@@ -137,7 +137,7 @@ class StrategyEngine:
                 # 1. Price too far from middle band
                 dist = abs(price - bb["middle"]) / bb["middle"]
                 if dist > 0.20:
-                    return "Price moved >15% from middle band"
+                    return "Price moved >20% from middle band"
 
                 # 2. MACD histogram (green/red bars) spike
                 if abs(macd["histogram"]) > 0.10:
@@ -188,6 +188,7 @@ class StrategyEngine:
                 "action": "buy",
                 "contract_type": "ACCU",
                 "growth_rate": 0.01,
+                "take_profit": 0.50,
                 "reason": f"Price near middle band ({dist_from_middle:.3%})"
             }
         return None

@@ -451,7 +451,8 @@ class TradingEngine:
             "status": "open",
             "barrier_upper": round(entry_price + 0.438, 3),
             "barrier_lower": round(entry_price - 0.438, 3),
-            "max_profit": 0
+            "max_profit": 0,
+            "take_profit": signal.get("take_profit", 0)
         }
         self.open_contracts[contract_id] = buy_data
 
@@ -463,18 +464,36 @@ class TradingEngine:
         await self._broadcast({"type": "trade_opened", "contract": buy_data})
         await self._log("info", f"DEMO trade opened: {signal['contract_type']} @ ${amount} | Balance: ${self.state.balance:.2f}")
 
-        self._create_task(self._demo_close_contract(contract_id))
+        self._create_task(self._demo_close_contract(contract_id, signal.get("take_profit", 0)))
 
-    async def _demo_close_contract(self, contract_id: str):
-        await asyncio.sleep(random.randint(5, 15))
-        if contract_id not in self.open_contracts:
-            return
-        contract = self.open_contracts[contract_id]
-        stake = contract.get("stake", self.stake)
-        is_win = random.random() > 0.5
-        profit = round(stake * 0.95, 2) if is_win else round(-stake, 2)
-        status = "won" if is_win else "lost"
-        await self._close_trade(contract_id, profit, status)
+    async def _demo_close_contract(self, contract_id: str, take_profit: float = 0):
+        """Close demo contract when TP is hit or after random delay."""
+        tp = float(take_profit)
+        while True:
+            await asyncio.sleep(1)
+            if contract_id not in self.open_contracts:
+                return
+            contract = self.open_contracts[contract_id]
+            # Simulate profit growth
+            stake = contract.get("stake", self.stake)
+            elapsed = int(datetime.now().timestamp()) - contract.get("entry_epoch", 0)
+            # Rough profit simulation: grows over time with noise
+            simulated_profit = round((elapsed * 0.02) + (random.random() - 0.3) * 0.1, 2)
+            if simulated_profit > stake * 0.95:
+                simulated_profit = round(stake * 0.95, 2)
+            contract["profit"] = simulated_profit
+            # TP hit
+            if tp > 0 and simulated_profit >= tp:
+                await self._close_trade(contract_id, simulated_profit, "won")
+                await self._log("info", f"DEMO TP hit: ${simulated_profit:.2f}")
+                return
+            # Max ticks / time fallback
+            if elapsed > 15:
+                is_win = simulated_profit > 0
+                profit = round(simulated_profit, 2) if is_win else round(-stake, 2)
+                status = "won" if is_win else "lost"
+                await self._close_trade(contract_id, profit, status)
+                return
 
     async def _on_buy(self, buy_data: dict):
         contract_id = buy_data.get("contract_id")
@@ -562,6 +581,10 @@ class TradingEngine:
         # Growth rate — REQUIRED for ACCU
         if signal.get("contract_type") == "ACCU":
             proposal_req["growth_rate"] = float(GROWTH_RATE)
+
+        # Take profit — injected by strategy
+        if "take_profit" in signal:
+            proposal_req["take_profit"] = signal["take_profit"]
 
         # Multiplier parameters
         if "multiplier" in signal:
