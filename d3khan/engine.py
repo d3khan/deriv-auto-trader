@@ -514,21 +514,33 @@ class TradingEngine:
 
     async def _on_contract_update(self, contract: dict):
         contract_id = contract.get("contract_id")
-        if contract_id in self.open_contracts:
-            old = self.open_contracts[contract_id]
-            contract["sell_blocked"] = old.get("sell_blocked", False)
-            contract["sell_pending"] = old.get("sell_pending", False)
-            contract["entry_price"] = old.get("entry_price", contract.get("entry_tick", 0))
-            contract["barrier_upper"] = old.get("barrier_upper", 0)
-            contract["barrier_lower"] = old.get("barrier_lower", 0)
-            contract["max_profit"] = max(old.get("max_profit", 0), contract.get("profit", 0))
-            contract["take_profit"] = old.get("take_profit", 0)
-            self.open_contracts[contract_id] = contract
-            status = contract.get("status")
-            if status in ("sold", "won", "lost"):
-                profit = contract.get("profit", 0)
-                await self._close_trade(contract_id, profit, status)
-            await self._broadcast({"type": "contract_update", "contract": contract})
+        if contract_id not in self.open_contracts:
+            return
+
+        old = self.open_contracts[contract_id]
+        contract["sell_blocked"] = old.get("sell_blocked", False)
+        contract["sell_pending"] = old.get("sell_pending", False)
+        contract["entry_price"] = old.get("entry_price", contract.get("entry_tick", 0))
+        contract["barrier_upper"] = old.get("barrier_upper", 0)
+        contract["barrier_lower"] = old.get("barrier_lower", 0)
+        contract["max_profit"] = max(old.get("max_profit", 0), float(contract.get("profit", 0)))
+        contract["take_profit"] = old.get("take_profit", 0)
+        self.open_contracts[contract_id] = contract
+
+        # ─── TP CHECK: sell immediately when profit hits target ───
+        current_profit = float(contract.get("profit", 0))
+        tp = float(old.get("take_profit", 0))
+        if tp > 0 and current_profit >= tp:
+            await self._sell_contract(contract_id, f"Take profit hit: ${current_profit:.2f}")
+            return
+
+        status = contract.get("status")
+        if status in ("sold", "won", "lost"):
+            profit = float(contract.get("profit", 0))
+            await self._close_trade(contract_id, profit, status)
+            return
+
+        await self._broadcast({"type": "contract_update", "contract": contract})
 
     async def _execute_signal(self, signal: dict):
         if not self.deriv.authorized:
