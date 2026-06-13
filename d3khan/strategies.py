@@ -117,13 +117,15 @@ class StrategyEngine:
                 dist = abs(price - bb["middle"]) / bb["middle"]
                 if dist > 0.15:
                     return "Price moved >15% from middle band"
-            if abs(macd["histogram"]) > 0.05:
-                return "MACD histogram spike beyond ±0.05"
+                if abs(macd["histogram"]) > 0.025:
+                    return "MACD histogram spike beyond ±0.025"
+            return None
         elif self.strategy == "DUMMY_RISE_FALL":
             entry_epoch = contract.get("entry_epoch", 0)
             current_epoch = self.indicators.ticks[-1].get("epoch", 0) if self.indicators.ticks else 0
             if current_epoch - entry_epoch > 10:
                 return "dummy_time_exit"
+            return None
         return None
 
     def _dummy_rise_fall(self) -> Optional[Dict[str, Any]]:
@@ -149,7 +151,7 @@ class StrategyEngine:
                 "action": "buy",
                 "contract_type": "ACCU",
                 "growth_rate": 0.01,
-                "reason": "Price near middle band"
+                "reason": f"Price near middle band ({dist_from_middle:.3%})"
             }
         return None
 
@@ -162,7 +164,7 @@ class StrategyEngine:
         if ema8 > ema21 and 50 < rsi < 70:
             return {"action": "buy", "contract_type": "CALL", "duration": 5, "duration_unit": "t", "reason": "EMA8>EMA21, RSI>50"}
         elif ema8 < ema21 and 30 < rsi < 50:
-            return {"action": "buy", "contract_type": "PUT", "duration": 5, "duration_unit": "t", "reason": "EMA8<EMA21, RSI<50"}
+            return {"action": "buy", "contract_type": "PUT", "duration": 5, "duration_unit": "t", "reason": "EMA8<<EMA21, RSI<<50"}
         return None
 
     def _multiplier_signal(self) -> Optional[Dict[str, Any]]:
@@ -170,8 +172,9 @@ class StrategyEngine:
         if sig:
             sig["contract_type"] = "MULTUP" if sig["contract_type"] == "CALL" else "MULTDOWN"
             sig["multiplier"] = 100
-            sig["stop_loss"] = 0.75
-        return sig
+            sig["stop_loss"] = 5.0
+            return sig
+        return None
 
     def _touch_signal(self) -> Optional[Dict[str, Any]]:
         bb = self.indicators.bbands(20, 2)

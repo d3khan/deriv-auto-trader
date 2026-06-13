@@ -111,6 +111,7 @@ class TradingEngine:
         self._demo_mode = False
         self._demo_task = None
         self.session_cache = SessionCache()
+        self._background_tasks = set()
 
         self.ticks: List[dict] = []
         self.candles_1m: List[dict] = []
@@ -123,6 +124,12 @@ class TradingEngine:
         self.max_loss = float(MAX_DAILY_LOSS)
         self.max_consec = int(MAX_CONSECUTIVE_LOSSES)
         self.tp_target = float(TAKE_PROFIT)
+
+    def _create_task(self, coro):
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def _get_stake(self, contract_type: str = "") -> float:
         """Return stake clamped between MIN_STAKE and MAX_STAKE."""
@@ -155,8 +162,8 @@ class TradingEngine:
             }
             self.ticks.append({"epoch": tick["epoch"], "price": tick["quote"]})
             self._update_candles_from_tick(tick)
-        if len(self.ticks) > self.max_ticks:
-            self.ticks = self.ticks[-self.max_ticks:]
+            if len(self.ticks) > self.max_ticks:
+                self.ticks = self.ticks[-self.max_ticks:]
 
     async def start(self):
         await self.db.connect()
@@ -196,8 +203,8 @@ class TradingEngine:
         self.state.is_running = True
 
         await self._broadcast({
-            "type": "engine_status", 
-            "status": "running", 
+            "type": "engine_status",
+            "status": "running",
             "demo_mode": self._demo_mode
         })
 
@@ -231,6 +238,34 @@ class TradingEngine:
             "balance": self.state.balance,
             "session_pl": self.session_profit
         })
+
+    async def shutdown(self):
+        """Clean shutdown: cancel all tasks, close connections."""
+        print("[Engine] Shutdown initiated...")
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+
+        if self._demo_task:
+            self._demo_task.cancel()
+            try:
+                await self._demo_task
+            except asyncio.CancelledError:
+                pass
+
+        try:
+            await self.deriv.close()
+        except Exception as e:
+            print(f"[Engine] Deriv close error: {e}")
+
+        if self.db._conn:
+            try:
+                await self.db._conn.close()
+            except Exception as e:
+                print(f"[Engine] DB close error: {e}")
+        print("[Engine] Shutdown complete.")
 
     async def _load_tick_history(self):
         try:
@@ -308,8 +343,6 @@ class TradingEngine:
                     await self._execute_demo_trade(signal)
                 else:
                     await self._execute_signal(signal)
-            elif getattr(self.strategy_engine, 'tick_count', 0) % 20 == 0:
-                await self._log("debug", f"No signal from {self.strategy_engine.strategy} (prices: {len(self.strategy_engine.indicators.prices)})")
 
     def _update_candles_from_tick(self, tick: dict):
         epoch = tick.get("epoch", 0)
@@ -329,8 +362,8 @@ class TradingEngine:
                     "low": price,
                     "close": price
                 })
-                if len(target) > self.max_candles:
-                    target.pop(0)
+            if len(target) > self.max_candles:
+                target.pop(0)
 
     async def _on_candles_history(self, msg: dict):
         candles = msg.get("candles", [])
@@ -373,8 +406,8 @@ class TradingEngine:
             target[-1] = candle
         else:
             target.append(candle)
-            if len(target) > self.max_candles:
-                target.pop(0)
+        if len(target) > self.max_candles:
+            target.pop(0)
         await self._broadcast({
             "type": "ohlc",
             "ohlc": ohlc,
@@ -407,14 +440,18 @@ class TradingEngine:
         })
 
         contract_id = f"DEMO_{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1000,9999)}"
+        entry_price = self.state.last_tick["quote"] if self.state.last_tick else 5000.0
         buy_data = {
             "contract_id": contract_id,
             "symbol": SYMBOL,
             "contract_type": signal["contract_type"],
             "stake": amount,
-            "entry_price": self.state.last_tick["quote"] if self.state.last_tick else 5000.0,
+            "entry_price": entry_price,
             "entry_epoch": int(datetime.now().timestamp()),
-            "status": "open"
+            "status": "open",
+            "barrier_upper": round(entry_price + 0.438, 3),
+            "barrier_lower": round(entry_price - 0.438, 3),
+            "max_profit": 0
         }
         self.open_contracts[contract_id] = buy_data
 
@@ -426,7 +463,7 @@ class TradingEngine:
         await self._broadcast({"type": "trade_opened", "contract": buy_data})
         await self._log("info", f"DEMO trade opened: {signal['contract_type']} @ ${amount} | Balance: ${self.state.balance:.2f}")
 
-        asyncio.create_task(self._demo_close_contract(contract_id))
+        self._create_task(self._demo_close_contract(contract_id))
 
     async def _demo_close_contract(self, contract_id: str):
         await asyncio.sleep(random.randint(5, 15))
@@ -442,6 +479,13 @@ class TradingEngine:
     async def _on_buy(self, buy_data: dict):
         contract_id = buy_data.get("contract_id")
         if contract_id:
+            entry_price = buy_data.get("entry_tick", buy_data.get("entry_price", 0))
+            if not entry_price and self.state.last_tick:
+                entry_price = self.state.last_tick.get("quote", 0)
+            buy_data["entry_price"] = entry_price
+            buy_data["barrier_upper"] = round(entry_price + 0.438, 3) if entry_price else 0
+            buy_data["barrier_lower"] = round(entry_price - 0.438, 3) if entry_price else 0
+            buy_data["max_profit"] = 0
             self.open_contracts[contract_id] = buy_data
             await self.deriv.subscribe_contract_updates(contract_id)
             ct = buy_data.get("contract_type") or self.strategy_engine.strategy
@@ -459,6 +503,10 @@ class TradingEngine:
             old = self.open_contracts[contract_id]
             contract["sell_blocked"] = old.get("sell_blocked", False)
             contract["sell_pending"] = old.get("sell_pending", False)
+            contract["entry_price"] = old.get("entry_price", contract.get("entry_tick", 0))
+            contract["barrier_upper"] = old.get("barrier_upper", 0)
+            contract["barrier_lower"] = old.get("barrier_lower", 0)
+            contract["max_profit"] = max(old.get("max_profit", 0), contract.get("profit", 0))
             self.open_contracts[contract_id] = contract
             status = contract.get("status")
             if status in ("sold", "won", "lost"):
@@ -491,7 +539,7 @@ class TradingEngine:
             return
 
         amount = self._get_stake(signal.get("contract_type", ""))
-        
+
         # FIXED: Removed the invalid 'underlying_symbol' property.
         proposal_req = {
             "proposal": 1,
@@ -570,7 +618,7 @@ class TradingEngine:
                 profit = round(stake * 0.95, 2) if is_win else round(-stake, 2)
                 status = "won" if is_win else "lost"
                 await self._close_trade(contract_id, profit, status)
-            await self._log("info", f"DEMO sell: {reason}")
+                await self._log("info", f"DEMO sell: {reason}")
             return
 
         try:
@@ -632,6 +680,8 @@ class TradingEngine:
             "session": self.state.current_session.dict()
         })
 
+        await self._log("info", f"Trade closed: {status.upper()} | Profit: ${profit:.2f}")
+
         if self.consecutive_losses >= self.max_consec:
             self.is_trading_enabled = False
             await self._broadcast({"type": "auto_stop", "reason": "Max consecutive losses"})
@@ -673,6 +723,15 @@ class TradingEngine:
 
     async def set_options(self, options: dict):
         """Update trading options from frontend in real-time."""
+        # Preserve indicator state when switching strategies
+        old_indicators = None
+        old_tick_count = 0
+        old_last_direction = "CALL"
+        if self.strategy_engine:
+            old_indicators = self.strategy_engine.indicators
+            old_tick_count = self.strategy_engine.tick_count
+            old_last_direction = self.strategy_engine.last_direction
+
         if "stake" in options:
             self.stake = max(float(MIN_STAKE), min(float(options["stake"]), float(MAX_STAKE)))
         if "max_loss" in options:
@@ -682,7 +741,14 @@ class TradingEngine:
         if "tp_target" in options:
             self.tp_target = float(options["tp_target"])
         if "contract_type" in options:
-            self.strategy_engine = StrategyEngine(options["contract_type"])
+            new_strategy = options["contract_type"]
+            if self.strategy_engine.strategy != new_strategy:
+                self.strategy_engine = StrategyEngine(new_strategy)
+                # Restore indicator state so we don't lose price history
+                if old_indicators:
+                    self.strategy_engine.indicators = old_indicators
+                    self.strategy_engine.tick_count = old_tick_count
+                    self.strategy_engine.last_direction = old_last_direction
         await self._log("info", f"Options updated: stake=${self.stake}, max_loss=${self.max_loss}, max_consec={self.max_consec}, tp=${self.tp_target}, strategy={self.strategy_engine.strategy}")
 
     async def get_stats(self) -> dict:
@@ -694,7 +760,7 @@ class TradingEngine:
         self.session_cache.clear()
         self.session_profit = 0.0
         self.consecutive_losses = 0
-        self.open_contracts.clear()
+        # NOTE: Do NOT clear open_contracts — we want to keep tracking open trades
         if self.state.current_session:
             self.state.current_session.total_trades = 0
             self.state.current_session.wins = 0
@@ -721,7 +787,7 @@ class TradingEngine:
                 "total_trades": 0,
                 "total_wins": 0,
                 "total_losses": 0,
-                "open_contracts": [],
+                "open_contracts": list(self.open_contracts.values()),
                 "is_trading_enabled": self.is_trading_enabled,
             }
         })

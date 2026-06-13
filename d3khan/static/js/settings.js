@@ -60,15 +60,11 @@ const Settings = {
             const originalText = clearCache.textContent;
             clearCache.textContent = 'Clearing...';
             try {
-                // Tell backend to clear DB and engine state
                 if (typeof App !== 'undefined' && App.send) {
                     App.send({ action: 'clear_cache' });
                 }
-                // Clear frontend storage
                 localStorage.removeItem('d3khan-options');
-                // Clear local log display immediately
                 if (typeof Logs !== 'undefined' && Logs.clear) Logs.clear();
-                // Refresh stats from backend after a short delay
                 setTimeout(() => {
                     if (typeof App !== 'undefined' && App.send) {
                         App.send({ action: 'get_stats' });
@@ -88,7 +84,12 @@ const Settings = {
         const restartWs = document.getElementById('btn-restart-ws');
         if (restartWs) restartWs.addEventListener('click', () => {
             if (typeof App !== 'undefined') {
-                App.ws.close();
+                clearTimeout(App.reconnectTimer);
+                App.reconnectTimer = null;
+                App._manualClose = true;
+                if (App.ws) {
+                    App.ws.close();
+                }
                 setTimeout(() => App.initWebSocket(), 500);
             }
         });

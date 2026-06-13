@@ -8,6 +8,7 @@ const App = {
         demoMode: false, currentStrategy: 'DUMMY_RISE_FALL'
     },
     reconnectTimer: null,
+    _manualClose: false,
     favicons: {
         void: 'https://kimi-web-img.moonshot.cn/img/cdn-icons-png.flaticon.com/3fbf85e7470b21893f94568921916eabaa1a23be.png',
         ice: 'https://kimi-web-img.moonshot.cn/img/cdn-icons-png.flaticon.com/9059286e1753ab6e77aacba560f4f476f7fae544.png',
@@ -31,7 +32,7 @@ const App = {
 
     initTheme() {
         const saved = localStorage.getItem('d3khan-theme');
-        const theme = ['void','ice','matrix'].includes(saved) ? saved : 'void';
+        const theme = ['void', 'ice', 'matrix'].includes(saved) ? saved : 'void';
         document.body.setAttribute('data-theme', theme);
         this.setFavicon(theme);
         const sel = document.getElementById('theme-selector');
@@ -78,6 +79,9 @@ const App = {
     },
 
     initWebSocket() {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+
         const url = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws';
         this.ws = new WebSocket(url);
 
@@ -105,6 +109,10 @@ const App = {
         };
 
         this.ws.onclose = () => {
+            if (this._manualClose) {
+                this._manualClose = false;
+                return;
+            }
             this.state.wsConnected = false;
             this.updateConnectionStatus(false);
             Utils.toast('WebSocket disconnected — retrying…', 'warning');
@@ -185,6 +193,7 @@ const App = {
                 if (msg.ticks && msg.ticks.length > 0) {
                     Chart.onTickHistory(msg.ticks);
                 }
+                Stats.resetContracts(msg.state?.open_contracts || []);
                 Dashboard.render();
                 Stats.render();
                 this._updateStatsDOM();
@@ -211,6 +220,7 @@ const App = {
                 Dashboard.updateActive(this.state.activeTrades);
                 Stats.addContract(msg.contract);
                 Utils.toast('Trade opened: ' + (msg.contract?.contract_type || ''), 'success');
+                Dashboard.addLog('info', `Trade opened: ${msg.contract?.contract_type || ''} @ $${(msg.contract?.stake || 0).toFixed(2)}`);
                 break;
 
             case 'trade_closed':
@@ -226,7 +236,9 @@ const App = {
                 Stats.updateContractClosed(msg.contract_id, msg.profit, msg.status);
                 Stats.updateMetrics(this.state);
                 this._updateStatsDOM();
-                Utils.toast('Trade closed: ' + (msg.profit > 0 ? '+' : '') + (msg.profit?.toFixed?.(2) || msg.profit), msg.profit > 0 ? 'success' : 'error');
+                const profitStr = (msg.profit > 0 ? '+' : '') + (msg.profit?.toFixed?.(2) || msg.profit);
+                Utils.toast('Trade closed: ' + profitStr, msg.profit > 0 ? 'success' : 'error');
+                Dashboard.addLog(msg.profit > 0 ? 'success' : 'error', `Trade ${msg.status}: ${profitStr}`);
                 break;
 
             case 'contract_update':
@@ -236,6 +248,22 @@ const App = {
             case 'log':
                 if (typeof Logs !== 'undefined' && Logs.shouldShow && Logs.shouldShow(msg.level)) {
                     Logs.add(msg.level, msg.message, msg.source, msg.timestamp);
+                }
+                const lowerMsg = msg.message.toLowerCase();
+                const isTradingLog =
+                    lowerMsg.includes('trading enabled') ||
+                    lowerMsg.includes('trading disabled') ||
+                    lowerMsg.includes('trade opened') ||
+                    lowerMsg.includes('trade closed') ||
+                    lowerMsg.includes('demo trade opened') ||
+                    lowerMsg.includes('real trade opened') ||
+                    lowerMsg.includes('demo sell') ||
+                    lowerMsg.includes('sell signal') ||
+                    lowerMsg.includes('auto-stop') ||
+                    lowerMsg.includes('max daily loss') ||
+                    lowerMsg.includes('max consecutive losses') ||
+                    lowerMsg.includes('take profit target');
+                if (isTradingLog) {
                     Dashboard.addLog(msg.level, msg.message);
                 }
                 break;
@@ -243,6 +271,7 @@ const App = {
             case 'trading_status':
                 this.state.tradingEnabled = msg.enabled;
                 Dashboard.updateEngineStatus(this.state.engineRunning, msg.enabled);
+                Dashboard.addLog('info', `Trading ${msg.enabled ? 'enabled' : 'disabled'}`);
                 break;
 
             case 'engine_status':
@@ -255,6 +284,7 @@ const App = {
                 Dashboard.updateEngineStatus(this.state.engineRunning, false);
                 Utils.toast('Auto-stop: ' + msg.reason, 'warning');
                 Utils.sendDesktopNotif('d3khan Auto-Stop', msg.reason);
+                Dashboard.addLog('warning', `Auto-stop: ${msg.reason}`);
                 break;
 
             case 'error':
@@ -271,6 +301,7 @@ const App = {
 
             case 'cache_cleared':
                 Utils.toast('Server cache and stats reset', 'success');
+                Stats.clear();
                 break;
 
             case 'pong':

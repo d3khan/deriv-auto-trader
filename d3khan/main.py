@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import signal
+import sys
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -17,12 +19,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    if engine._demo_task:
-        engine._demo_task.cancel()
-    try:
-        await engine.deriv.close()
-    except:
-        pass
+    await engine.shutdown()
 
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")

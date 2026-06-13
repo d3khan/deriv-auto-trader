@@ -80,7 +80,8 @@ const Dashboard = {
         const time = new Date().toLocaleTimeString('en-GB');
         const entry = document.createElement('div');
         entry.className = 'log-entry';
-        entry.innerHTML = '<span class="log-time">' + time + '</span><span class="log-' + level + '">' + message + '</span>';
+        const levelClass = level === 'error' ? 'log-error' : level === 'success' ? 'log-success' : level === 'warning' ? 'log-error' : 'log-trade';
+        entry.innerHTML = `<span class="log-time">${time}</span><span class="${levelClass}">${message}</span>`;
         stream.insertBefore(entry, stream.firstChild);
         while (stream.children.length > 50) stream.removeChild(stream.lastChild);
     }
