@@ -117,7 +117,7 @@ class StrategyEngine:
                 dist = abs(price - bb["middle"]) / bb["middle"]
                 if dist > 0.15:
                     return "Price moved >15% from middle band"
-                if abs(macd["histogram"]) > 0.025:
+                if abs(macd["histogram"]) > 0.015:
                     return "MACD histogram spike beyond ±0.025"
             return None
         elif self.strategy == "DUMMY_RISE_FALL":

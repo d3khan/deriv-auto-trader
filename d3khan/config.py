@@ -2,7 +2,7 @@ import os
 
 # Identity
 APP_NAME = "d3khan"
-VERSION = "v2.7.5-beta"
+VERSION = "v2.8.1-beta"
 BUILD_NUMBER = "2026.06.12"
 TOKEN = "Vqla5qYgKQ4xIi5" #Fall Back Token: "0VgnvWU66hbBWPS"
 APP_ID = 1089
