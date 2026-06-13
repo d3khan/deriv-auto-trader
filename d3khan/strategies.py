@@ -201,43 +201,54 @@ class StrategyEngine:
 
     def _quick_rise_fall_signal(self) -> Optional[Dict[str, Any]]:
         """
-        Perplexity EMA+RSI+Price Action Strategy for 5-tick Rise/Fall.
-        RISE: EMA8 > EMA21, RSI(7) > 50, price > prev tick, price > EMA21
-        FALL: EMA8 < EMA21, RSI(7) < 50, price < prev tick, price < EMA21
+        Bollinger Band Squeeze Breakout for 5-tick Rise/Fall.
+        After a narrow-band squeeze, price tends to run in the breakout direction.
+        CALL: price breaks ABOVE upper band with 2 confirming up-ticks.
+        PUT:  price breaks BELOW lower band with 2 confirming down-ticks.
+        Band-width filter prevents trading in choppy / extreme-volatility periods.
         """
-        if len(self.indicators.prices) < 21:
+        if len(self.indicators.prices) < 20:
             return None
 
-        # Cooldown: minimum 3 ticks between signals
-        if self.tick_count - self._last_signal_tick < 3:
+        # Cooldown: 5 ticks between signals
+        if self.tick_count - self._last_signal_tick < 5:
             return None
 
-        ema8 = self.indicators.ema(8)
-        ema21 = self.indicators.ema(21)
-        rsi = self.indicators.rsi(7)
-        current_price = self.indicators.prices[-1]
-        prev_price = self.indicators.prices[-2]
+        bb = self.indicators.bbands(20, 2)
+        if not bb["upper"] or bb["upper"] == 0 or not bb["middle"]:
+            return None
 
-        # RISE signal
-        if ema8 > ema21 and rsi > 50 and current_price > prev_price and current_price > ema21:
+        price = self.indicators.prices[-1]
+        prev = self.indicators.prices[-2]
+        prev2 = self.indicators.prices[-3]
+
+        # Band width as % of middle (0.02 = 2%, 0.08 = 8%)
+        band_width = (bb["upper"] - bb["lower"]) / bb["middle"] if bb["middle"] else 1
+
+        # Too narrow = dead market, too wide = already volatile / choppy
+        if band_width < 0.02 or band_width > 0.08:
+            return None
+
+        # CALL: breakout above upper band + 2 confirming up-ticks
+        if price > bb["upper"] and prev > prev2 and price > prev:
             self._last_signal_tick = self.tick_count
             return {
                 "action": "buy",
                 "contract_type": "CALL",
                 "duration": 5,
                 "duration_unit": "t",
-                "reason": f"RISE: EMA8({ema8:.2f})>EMA21({ema21:.2f}), RSI({rsi:.1f})>50, Price↑"
+                "reason": f"BB breakout UP: {price:.3f} > {bb['upper']:.3f} (width {band_width:.2%})"
             }
 
-        # FALL signal
-        if ema8 < ema21 and rsi < 50 and current_price < prev_price and current_price < ema21:
+        # PUT: breakout below lower band + 2 confirming down-ticks
+        if price < bb["lower"] and prev < prev2 and price < prev:
             self._last_signal_tick = self.tick_count
             return {
                 "action": "buy",
                 "contract_type": "PUT",
                 "duration": 5,
                 "duration_unit": "t",
-                "reason": f"FALL: EMA8({ema8:.2f})<<EMA21({ema21:.2f}), RSI({rsi:.1f})<<50, Price↓"
+                "reason": f"BB breakout DOWN: {price:.3f} < {bb['lower']:.3f} (width {band_width:.2%})"
             }
 
         return None

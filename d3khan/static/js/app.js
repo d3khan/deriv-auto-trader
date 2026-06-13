@@ -244,11 +244,8 @@ const App = {
       case 'contract_update':
         if (msg.contract) {
           Stats.updateContract(msg.contract);
-          // Sync active trades count from stats table so dashboard stays accurate
-          const openCount = Stats.contracts.filter(c => c.status === 'open' || !c.status).length;
-          this.state.activeTrades = openCount;
-          Dashboard.updateActive(openCount);
-          // Update P/L display if profit present
+          // Only update P/L display — do NOT touch activeTrades here.
+          // trade_opened/trade_closed are the only sources of truth for activeTrades.
           if (msg.contract.profit !== undefined && msg.contract.status === 'open') {
             Dashboard.updatePL(this.state.sessionPL);
           }
