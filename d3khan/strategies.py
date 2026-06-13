@@ -130,11 +130,28 @@ class StrategyEngine:
             macd = self.indicators.macd(12, 26, 9)
             price = self.indicators.prices[-1]
             if bb["middle"] and price > 0:
+                # 1. Price too far from middle band
                 dist = abs(price - bb["middle"]) / bb["middle"]
                 if dist > 0.15:
                     return "Price moved >15% from middle band"
+
+                # 2. MACD histogram (green/red bars) spike
                 if abs(macd["histogram"]) > 0.10:
                     return "MACD histogram spike beyond ±0.10"
+
+                # 3. MACD signal line (red line) extreme
+                if abs(macd["signal"]) > 0.10:
+                    return "MACD signal line beyond ±0.10"
+
+                # 4. Price near Bollinger Band edge
+                band_width = bb["upper"] - bb["lower"]
+                if band_width > 0:
+                    dist_to_upper = bb["upper"] - price
+                    dist_to_lower = price - bb["lower"]
+                    if dist_to_upper < band_width * 0.15:
+                        return f"Price near upper band ({dist_to_upper:.3f} from edge)"
+                    if dist_to_lower < band_width * 0.15:
+                        return f"Price near lower band ({dist_to_lower:.3f} from edge)"
             return None
         elif self.strategy == "DUMMY_RISE_FALL":
             entry_epoch = contract.get("entry_epoch", 0)
