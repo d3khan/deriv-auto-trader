@@ -50,21 +50,37 @@ class IndicatorState:
         if len(self.prices) < slow + signal:
             return {"macd": 0, "signal": 0, "histogram": 0}
 
-        def calc_ema(prices, period):
-            if len(prices) < period:
-                return prices[-1] if prices else 0
-            p = prices[-period:]
+        def calc_ema_series(data, period):
+            if len(data) < period:
+                return [data[-1]] if data else [0]
             multiplier = 2 / (period + 1)
-            ema = p[0]
-            for price in p[1:]:
-                ema = (price - ema) * multiplier + ema
-            return ema
+            ema = sum(data[:period]) / period
+            emas = [ema]
+            for value in data[period:]:
+                ema = (value - ema) * multiplier + ema
+                emas.append(ema)
+            return emas
 
-        fast_ema = calc_ema(self.prices, fast)
-        slow_ema = calc_ema(self.prices, slow)
-        macd_val = fast_ema - slow_ema
-        signal_val = macd_val * 0.8
-        return {"macd": macd_val, "signal": signal_val, "histogram": macd_val - signal_val}
+        prices = self.prices[-(slow + signal):]
+
+        fast_emas = calc_ema_series(prices, fast)
+        slow_emas = calc_ema_series(prices, slow)
+
+        macd_line = []
+        fast_offset = slow - fast
+        for i in range(len(slow_emas)):
+            macd_line.append(fast_emas[fast_offset + i] - slow_emas[i])
+
+        signal_emas = calc_ema_series(macd_line, signal)
+
+        current_macd = macd_line[-1]
+        current_signal = signal_emas[-1]
+
+        return {
+            "macd": current_macd,
+            "signal": current_signal,
+            "histogram": current_macd - current_signal
+        }
 
     def donchian(self, period: int = 20) -> dict:
         if len(self.prices) < period:
@@ -117,8 +133,8 @@ class StrategyEngine:
                 dist = abs(price - bb["middle"]) / bb["middle"]
                 if dist > 0.15:
                     return "Price moved >15% from middle band"
-                if abs(macd["histogram"]) > 0.015:
-                    return "MACD histogram spike beyond ±0.025"
+                if abs(macd["histogram"]) > 0.10:
+                    return "MACD histogram spike beyond ±0.10"
             return None
         elif self.strategy == "DUMMY_RISE_FALL":
             entry_epoch = contract.get("entry_epoch", 0)
