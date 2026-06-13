@@ -535,8 +535,6 @@ class TradingEngine:
         tp = float(old.get("take_profit", 0))
         if tp > 0 and current_profit >= tp:
             await self._close_trade(contract_id, current_profit, "won")
-            
-        return
 
         status = contract.get("status")
         if status in ("sold", "won", "lost"):
