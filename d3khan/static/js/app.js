@@ -271,7 +271,7 @@ const App = {
       case 'trading_status':
         this.state.tradingEnabled = msg.enabled;
         Dashboard.updateEngineStatus(this.state.engineRunning, msg.enabled);
-        Dashboard.addLog('info', `Trading ${msg.enabled ? 'enabled' : 'disabled'}`);
+        // REMOVED: Dashboard.addLog here — the backend log message already handles it
         break;
 
       case 'engine_status':
