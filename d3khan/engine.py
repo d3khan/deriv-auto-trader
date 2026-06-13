@@ -527,11 +527,14 @@ class TradingEngine:
         contract["take_profit"] = old.get("take_profit", 0)
         self.open_contracts[contract_id] = contract
 
-        # ─── TP CHECK: sell immediately when profit hits target ───
+        # Broadcast FIRST so stats page sees the profit update immediately
+        await self._broadcast({"type": "contract_update", "contract": contract})
+
+        # TP check: close immediately if profit >= target (no loops, no blocking)
         current_profit = float(contract.get("profit", 0))
         tp = float(old.get("take_profit", 0))
         if tp > 0 and current_profit >= tp:
-            await self._sell_contract(contract_id, f"Take profit hit: ${current_profit:.2f}")
+            await self._close_trade(contract_id, current_profit, "won")
             return
 
         status = contract.get("status")
@@ -539,8 +542,6 @@ class TradingEngine:
             profit = float(contract.get("profit", 0))
             await self._close_trade(contract_id, profit, status)
             return
-
-        await self._broadcast({"type": "contract_update", "contract": contract})
 
     async def _execute_signal(self, signal: dict):
         if not self.deriv.authorized:

@@ -242,7 +242,17 @@ const App = {
         break;
 
       case 'contract_update':
-        Stats.updateContract(msg.contract);
+        if (msg.contract) {
+          Stats.updateContract(msg.contract);
+          // Sync active trades count from stats table so dashboard stays accurate
+          const openCount = Stats.contracts.filter(c => c.status === 'open' || !c.status).length;
+          this.state.activeTrades = openCount;
+          Dashboard.updateActive(openCount);
+          // Update P/L display if profit present
+          if (msg.contract.profit !== undefined && msg.contract.status === 'open') {
+            Dashboard.updatePL(this.state.sessionPL);
+          }
+        }
         break;
 
       case 'log':
@@ -271,7 +281,6 @@ const App = {
       case 'trading_status':
         this.state.tradingEnabled = msg.enabled;
         Dashboard.updateEngineStatus(this.state.engineRunning, msg.enabled);
-        // REMOVED: Dashboard.addLog here — the backend log message already handles it
         break;
 
       case 'engine_status':

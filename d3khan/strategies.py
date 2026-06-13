@@ -98,6 +98,7 @@ class StrategyEngine:
         self.last_signal = None
         self.tick_count = 0
         self.last_direction = "CALL"
+        self._last_quick_dir = None
 
     def update(self, tick: dict):
         self.indicators.update(tick)
@@ -108,19 +109,21 @@ class StrategyEngine:
             return self._dummy_rise_fall()
         if self.strategy == "ACCU":
             return self._accumulator_signal()
-        elif self.strategy in ["CALL", "PUT"]:
+        elif self.strategy == "RISE_FALL":
             return self._rise_fall_signal()
-        elif self.strategy in ["MULTUP", "MULTDOWN"]:
+        elif self.strategy == "QUICK_RISE_FALL":
+            return self._quick_rise_fall_signal()
+        elif self.strategy == "MULTIPLIER":
             return self._multiplier_signal()
-        elif self.strategy in ["ONETOUCH", "NOTOUCH"]:
+        elif self.strategy == "TOUCH":
             return self._touch_signal()
-        elif self.strategy in ["DIGITOVER", "DIGITUNDER"]:
+        elif self.strategy == "DIGIT_OVER_UNDER":
             return self._digit_over_under_signal()
-        elif self.strategy in ["HIGHER", "LOWER"]:
+        elif self.strategy == "HIGHER_LOWER":
             return self._higher_lower_signal()
-        elif self.strategy in ["DIGITEVEN", "DIGITODD"]:
+        elif self.strategy == "EVEN_ODD":
             return self._even_odd_signal()
-        elif self.strategy in ["DIGITMATCH", "DIGITDIFF"]:
+        elif self.strategy == "MATCH_DIFFER":
             return self._match_differ_signal()
         return None
 
@@ -129,12 +132,6 @@ class StrategyEngine:
             bb = self.indicators.bbands(20, 2)
             macd = self.indicators.macd(12, 26, 9)
             price = self.indicators.prices[-1]
-
-            # 0. Take profit — early sell when profit hits target
-            tp = contract.get("take_profit", 0)
-            if tp > 0 and contract.get("profit", 0) >= tp:
-                return f"Take profit hit: ${contract['profit']:.2f}"
-
             if bb["middle"] and price > 0:
                 # 1. Price too far from middle band
                 dist = abs(price - bb["middle"]) / bb["middle"]
@@ -193,6 +190,43 @@ class StrategyEngine:
                 "take_profit": 0.50,
                 "reason": f"Price near middle band ({dist_from_middle:.3%})"
             }
+        return None
+
+    def _quick_rise_fall_signal(self) -> Optional[Dict[str, Any]]:
+        """Momentum scalping: 3 consecutive ticks in same direction → 7-tick expiry."""
+        if len(self.indicators.ticks) < 4:
+            return None
+        t1 = self.indicators.ticks[-3]["quote"]
+        t2 = self.indicators.ticks[-2]["quote"]
+        t3 = self.indicators.ticks[-1]["quote"]
+
+        # 3 consecutive up ticks → CALL (Rise)
+        if t1 < t2 < t3:
+            if self._last_quick_dir != "CALL":
+                self._last_quick_dir = "CALL"
+                return {
+                    "action": "buy",
+                    "contract_type": "CALL",
+                    "duration": 7,
+                    "duration_unit": "t",
+                    "reason": f"Quick rise: {t1:.3f}→{t2:.3f}→{t3:.3f}"
+                }
+            return None
+
+        # 3 consecutive down ticks → PUT (Fall)
+        if t1 > t2 > t3:
+            if self._last_quick_dir != "PUT":
+                self._last_quick_dir = "PUT"
+                return {
+                    "action": "buy",
+                    "contract_type": "PUT",
+                    "duration": 7,
+                    "duration_unit": "t",
+                    "reason": f"Quick fall: {t1:.3f}→{t2:.3f}→{t3:.3f}"
+                }
+            return None
+
+        self._last_quick_dir = None
         return None
 
     def _rise_fall_signal(self) -> Optional[Dict[str, Any]]:

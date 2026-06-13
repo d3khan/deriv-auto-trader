@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="/static/css/themes.css">
     <link rel="stylesheet" href="/static/css/base.css">
     <base target="_blank">
-<base target="_blank">
+    <base target="_blank">
 </head>
 
 <body data-theme="void">
@@ -263,25 +263,20 @@
                     <div class="panel-card">
                         <div class="panel-card-header">Strategy Selection</div>
                         <div class="panel-card-body">
-                            <div class="form-group"><label class="form-label">Contract Type</label><select
-                                    class="form-select" id="contract-type">
-                                    <option value="ACCU">Accumulator (ACCU)</option>
-                                    <option value="CALL">Rise / Fall — CALL</option>
-                                    <option value="PUT">Rise / Fall — PUT</option>
-                                    <option value="MULTUP">Multipliers — MULTUP</option>
-                                    <option value="MULTDOWN">Multipliers — MULTDOWN</option>
-                                    <option value="ONETOUCH">Touch / No Touch — ONETOUCH</option>
-                                    <option value="NOTOUCH">Touch / No Touch — NOTOUCH</option>
-                                    <option value="OVER">Digits Over / Under — OVER</option>
-                                    <option value="UNDER">Digits Over / Under — UNDER</option>
-                                    <option value="HIGHER">Higher / Lower — HIGHER</option>
-                                    <option value="LOWER">Higher / Lower — LOWER</option>
-                                    <option value="DIGITEVEN">Even / Odd — DIGITEVEN</option>
-                                    <option value="DIGITODD">Even / Odd — DIGITODD</option>
-                                    <option value="DIGITMATCH">Match / Differ — DIGITMATCH</option>
-                                    <option value="DIGITDIFF">Match / Differ — DIGITDIFF</option>
-                                    <option value="DUMMY_RISE_FALL">DUMMY_RISE_FALL (Test Strategy)</option>
-                                </select></div>
+                            <div class="form-group"><label class="form-label">Contract Type</label>
+                                <select id="contract-type" class="form-select">
+                                    <option value="ACCU" selected>Accumulator</option>
+                                    <option value="RISE_FALL">Rise / Fall</option>
+                                    <option value="QUICK_RISE_FALL">Quick Rise / Fall</option>
+                                    <option value="MULTIPLIER">Multipliers</option>
+                                    <option value="TOUCH">Touch / No Touch</option>
+                                    <option value="DIGIT_OVER_UNDER">Digits Over / Under</option>
+                                    <option value="HIGHER_LOWER">Higher / Lower</option>
+                                    <option value="EVEN_ODD">Even / Odd</option>
+                                    <option value="MATCH_DIFFER">Match / Differ</option>
+                                    <option value="DUMMY_RISE_FALL">Dummy Rise / Fall (Test)</option>
+                                </select>
+                            </div>
                             <div class="form-group"><label class="form-label">Symbol</label><input type="text"
                                     class="form-input" value="R_10" disabled></div>
                             <div class="form-group"><label class="form-label">Duration / Tick Size</label><select
@@ -421,16 +416,16 @@
     <script src="/static/js/settings.js"></script>
     <script src="/static/js/logs.js"></script>
     <script src="/static/js/app.js"></script>
-<script>
-(function(){
-    fetch('/api/config').then(r => r.json()).then(cfg => {
-        const ver = document.getElementById('engine-version');
-        const bld = document.getElementById('engine-build');
-        if (ver && cfg.version) ver.textContent = cfg.app_name + '-' + cfg.version;
-        if (bld && cfg.build) bld.textContent = 'Build ' + cfg.build;
-    }).catch(() => {});
-})();
-</script>
+    <script>
+        (function () {
+            fetch('/api/config').then(r => r.json()).then(cfg => {
+                const ver = document.getElementById('engine-version');
+                const bld = document.getElementById('engine-build');
+                if (ver && cfg.version) ver.textContent = cfg.app_name + '-' + cfg.version;
+                if (bld && cfg.build) bld.textContent = 'Build ' + cfg.build;
+            }).catch(() => { });
+        })();
+    </script>
 </body>
 
 </html>
