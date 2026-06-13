@@ -46,6 +46,13 @@ class IndicatorState:
         std = variance ** 0.5
         return {"upper": middle + std_dev * std, "middle": middle, "lower": middle - std_dev * std}
 
+    def atr(self, period: int = 14) -> float:
+        """Average True Range using tick-to-tick absolute changes."""
+        if len(self.prices) < period + 1:
+            return 0.0
+        ranges = [abs(self.prices[i] - self.prices[i-1]) for i in range(-period, 0)]
+        return sum(ranges) / period
+
     def macd(self, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
         if len(self.prices) < slow + signal + 50:
             return {"macd": 0, "signal": 0, "histogram": 0}
@@ -100,6 +107,9 @@ class StrategyEngine:
         self.last_direction = "CALL"
         self._last_quick_dir = None
         self._last_signal_tick = 0
+        # Perplexity ACCU state
+        self._prev_atr = 0.0
+        self._prev_volume_proxy = 0
 
     def update(self, tick: dict):
         self.indicators.update(tick)
@@ -130,45 +140,30 @@ class StrategyEngine:
 
     def check_exit(self, contract: dict) -> Optional[str]:
         if self.strategy == "ACCU":
-            bb = self.indicators.bbands(20, 2)
-            macd = self.indicators.macd(12, 26, 9)
-            price = self.indicators.prices[-1]
-
-            # 0. Take profit — early sell when profit hits target
+            # TP: close when profit >= $0.50
             tp = contract.get("take_profit", 0)
             if tp > 0 and contract.get("profit", 0) >= tp:
                 return f"Take profit hit: ${contract['profit']:.2f}"
 
-            if bb["middle"] and price > 0:
-                # 1. Price too far from middle band
-                dist = abs(price - bb["middle"]) / bb["middle"]
-                if dist > 0.015:
-                    return "Price moved >1.5% from middle band"
+            # Stop loss: 1 failure = exit immediately (any negative profit)
+            if contract.get("profit", 0) < -0.01:
+                return f"Stop loss: ${contract['profit']:.2f}"
 
-                # 2. MACD histogram (green/red bars) spike
-                if abs(macd["histogram"]) > 0.10:
-                    return "MACD histogram spike beyond ±0.10"
+            # Max duration: 100 ticks approximated by entry epoch
+            entry_epoch = contract.get("entry_epoch", 0)
+            current_epoch = self.indicators.ticks[-1].get("epoch", 0) if self.indicators.ticks else 0
+            if current_epoch - entry_epoch > 100:
+                return "Max duration (100 ticks) reached"
 
-                # 3. MACD signal line (red line) extreme
-                if abs(macd["signal"]) > 0.10:
-                    return "MACD signal line beyond ±0.10"
-
-                # 4. Price near Bollinger Band edge
-                band_width = bb["upper"] - bb["lower"]
-                if band_width > 0:
-                    dist_to_upper = bb["upper"] - price
-                    dist_to_lower = price - bb["lower"]
-                    if dist_to_upper < band_width * 0.15:
-                        return f"Price near upper band ({dist_to_upper:.3f} from edge)"
-                    if dist_to_lower < band_width * 0.15:
-                        return f"Price near lower band ({dist_to_lower:.3f} from edge)"
             return None
+
         elif self.strategy == "DUMMY_RISE_FALL":
             entry_epoch = contract.get("entry_epoch", 0)
             current_epoch = self.indicators.ticks[-1].get("epoch", 0) if self.indicators.ticks else 0
             if current_epoch - entry_epoch > 10:
                 return "dummy_time_exit"
             return None
+
         return None
 
     def _dummy_rise_fall(self) -> Optional[Dict[str, Any]]:
@@ -184,33 +179,65 @@ class StrategyEngine:
         }
 
     def _accumulator_signal(self) -> Optional[Dict[str, Any]]:
-        bb = self.indicators.bbands(20, 2)
-        if not bb["middle"]:
+        """
+        Perplexity Accumulator Strategy:
+        Bollinger Bands Squeeze + ATR Breakout + RSI Momentum
+        Entry: BB squeeze < 0.5%, price breaks above upper band, ATR rising, RSI 50-70
+        """
+        if len(self.indicators.prices) < 21:
             return None
-        price = self.indicators.prices[-1]
-        dist_from_middle = abs(price - bb["middle"]) / bb["middle"]
-        if dist_from_middle < 0.10:
-            return {
-                "action": "buy",
-                "contract_type": "ACCU",
-                "growth_rate": 0.01,
-                "take_profit": 0.50,
-                "reason": f"Price near middle band ({dist_from_middle:.3%})"
-            }
-        return None
+
+        # Cooldown: 5 ticks between signals
+        if self.tick_count - self._last_signal_tick < 5:
+            return None
+
+        bb = self.indicators.bbands(20, 2)
+        if not bb["upper"] or bb["upper"] == 0 or not bb["middle"]:
+            return None
+
+        current_price = self.indicators.prices[-1]
+        prev_price = self.indicators.prices[-2]
+
+        # 1. Bollinger Bands Squeeze: (Upper - Lower) / Middle < 0.005
+        bb_squeeze = (bb["upper"] - bb["lower"]) / bb["middle"] if bb["middle"] else 1
+        if bb_squeeze >= 0.005:
+            return None
+
+        # 2. Price breaks above upper band
+        if current_price <= bb["upper"]:
+            return None
+
+        # 3. ATR rising (14-period)
+        atr = self.indicators.atr(14)
+        if self._prev_atr > 0 and atr <= self._prev_atr:
+            return None
+        self._prev_atr = atr
+
+        # 4. RSI between 50 and 70
+        rsi = self.indicators.rsi(14)
+        if not (50 < rsi < 70):
+            return None
+
+        # 5. "Volume" proxy: tick activity increasing (2 consecutive up-ticks)
+        if not (current_price > prev_price and prev_price > self.indicators.prices[-3]):
+            return None
+
+        self._last_signal_tick = self.tick_count
+        return {
+            "action": "buy",
+            "contract_type": "ACCU",
+            "growth_rate": 0.01,
+            "take_profit": 0.50,
+            "reason": f"BB Squeeze+Breakout: squeeze={bb_squeeze:.4%}, RSI={rsi:.1f}, ATR={atr:.4f}"
+        }
 
     def _quick_rise_fall_signal(self) -> Optional[Dict[str, Any]]:
         """
         Bollinger Band Squeeze Breakout for 5-tick Rise/Fall.
-        After a narrow-band squeeze, price tends to run in the breakout direction.
-        CALL: price breaks ABOVE upper band with 2 confirming up-ticks.
-        PUT:  price breaks BELOW lower band with 2 confirming down-ticks.
-        Band-width filter prevents trading in choppy / extreme-volatility periods.
         """
         if len(self.indicators.prices) < 20:
             return None
 
-        # Cooldown: 5 ticks between signals
         if self.tick_count - self._last_signal_tick < 5:
             return None
 
@@ -222,14 +249,10 @@ class StrategyEngine:
         prev = self.indicators.prices[-2]
         prev2 = self.indicators.prices[-3]
 
-        # Band width as % of middle (0.02 = 2%, 0.08 = 8%)
         band_width = (bb["upper"] - bb["lower"]) / bb["middle"] if bb["middle"] else 1
-
-        # Too narrow = dead market, too wide = already volatile / choppy
         if band_width < 0.02 or band_width > 0.08:
             return None
 
-        # CALL: breakout above upper band + 2 confirming up-ticks
         if price > bb["upper"] and prev > prev2 and price > prev:
             self._last_signal_tick = self.tick_count
             return {
@@ -240,7 +263,6 @@ class StrategyEngine:
                 "reason": f"BB breakout UP: {price:.3f} > {bb['upper']:.3f} (width {band_width:.2%})"
             }
 
-        # PUT: breakout below lower band + 2 confirming down-ticks
         if price < bb["lower"] and prev < prev2 and price < prev:
             self._last_signal_tick = self.tick_count
             return {

@@ -530,17 +530,19 @@ class TradingEngine:
         # Broadcast FIRST so stats page sees the profit update immediately
         await self._broadcast({"type": "contract_update", "contract": contract})
 
-        # TP check: close immediately if profit >= target (no loops, no blocking)
+        # TP check: close immediately if profit >= target
         current_profit = float(contract.get("profit", 0))
         tp = float(old.get("take_profit", 0))
         if tp > 0 and current_profit >= tp:
             await self._close_trade(contract_id, current_profit, "won")
+            return  # <-- FIX: prevent double-close
 
+        # Status-based close (sold/won/lost from Deriv)
         status = contract.get("status")
         if status in ("sold", "won", "lost"):
             profit = float(contract.get("profit", 0))
             await self._close_trade(contract_id, profit, status)
-            return
+            return  # <-- FIX: prevent any further processing
 
     async def _execute_signal(self, signal: dict):
         if not self.deriv.authorized:
